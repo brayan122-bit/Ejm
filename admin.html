@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Inscripciones recibidas · Bienestar 360</title>
+<style>
+:root{
+  --red:#E61400; --red-dark:#B30F00; --red-tint:#FFF3F0;
+  --blue:#0555FA; --ink:#262626; --muted:#626873; --line:#DDE1E7; --surface:#F4F5F7;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-family:Arial,Helvetica,sans-serif;color:var(--ink);background:var(--surface);font-size:15px;line-height:1.45}
+button,input{font:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid rgba(5,85,250,.45);outline-offset:2px}
+.top{background:var(--red);color:#fff}
+.top-in{max-width:1180px;margin:0 auto;padding:16px 20px}
+.top h1{font-size:17px;margin:0}
+.top p{margin:2px 0 0;font-size:12.5px;opacity:.92}
+main{max-width:1180px;margin:0 auto;padding:24px 20px 48px}
+.login{max-width:380px;margin:40px auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:24px}
+.login h2{font-size:18px;margin:0 0 6px}
+.login p{margin:0 0 16px;color:var(--muted);font-size:14px}
+label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}
+input[type=password],input[type=search]{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:#fff}
+.btn{border:0;border-radius:6px;padding:10px 16px;font-weight:700;background:var(--red);color:#fff}
+.btn:hover{background:var(--red-dark)}
+.btn.sec{background:#fff;color:var(--ink);border:1px solid var(--line)}
+.btn.sec:hover{background:var(--surface)}
+.btn:disabled{opacity:.5;cursor:default}
+.login .btn{width:100%;margin-top:14px}
+.err{color:var(--red-dark);background:var(--red-tint);border-radius:6px;padding:8px 10px;font-size:13.5px;margin-top:12px}
+.bar{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin-bottom:14px}
+.bar .buscar{flex:1 1 280px}
+.count{color:var(--muted);font-size:13.5px;margin:0 0 10px}
+.tabla{background:#fff;border:1px solid var(--line);border-radius:8px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{background:var(--surface);font-size:12.5px;color:var(--muted);position:sticky;top:0}
+tr:last-child td{border-bottom:0}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.vacio{padding:36px 16px;text-align:center;color:var(--muted)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header class="top"><div class="top-in">
+  <h1>Inscripciones recibidas</h1>
+  <p>Enel Bienestar 360 · Acceso restringido</p>
+</div></header>
+
+<main>
+  <form class="login" id="login">
+    <h2>Ingresar</h2>
+    <p>Escriba la contraseña de administración para ver las inscripciones.</p>
+    <label for="pwd">Contraseña</label>
+    <input type="password" id="pwd" autocomplete="current-password" required>
+    <button class="btn" id="entrar" type="submit">Ver inscripciones</button>
+    <div class="err" id="loginErr" hidden></div>
+  </form>
+
+  <section id="panel" hidden>
+    <div class="bar">
+      <div class="buscar">
+        <label for="q">Buscar por cédula, nombre o empresa</label>
+        <input type="search" id="q" placeholder="Ej.: 1020304050 o nombre de la empresa">
+      </div>
+      <button class="btn sec" id="recargar" type="button">Actualizar</button>
+      <button class="btn" id="csv" type="button">Descargar Excel (CSV)</button>
+      <button class="btn sec" id="salir" type="button">Salir</button>
+    </div>
+    <p class="count" id="count"></p>
+    <div class="err" id="panelErr" hidden></div>
+    <div class="tabla">
+      <table>
+        <thead><tr>
+          <th>Recibido</th><th>Empresa</th><th>Titular</th><th>Documento</th>
+          <th>Asistencia</th><th>Plan</th><th>Valor mensual</th><th>Asesor</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div class="vacio" id="vacio" hidden>Aún no hay inscripciones. Aparecerán aquí cuando alguien genere una desde el formulario.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+// Mismo orden de columnas que el consolidado del formulario.
+const COLS_PERSONA = ['nombres','apellidos','tipo_doc','num_doc','fecha_nac','genero'];
+const COLS = (() => {
+  const c = ['id_inscripcion','fecha','asesor','empresa','nit','pagador_nombre','pagador_cedula',
+    'titular_nombres','titular_apellidos','titular_tipo_doc','titular_num_doc','titular_fecha_nac',
+    'titular_edad','titular_genero','titular_celular','titular_correo','titular_ciudad','titular_barrio',
+    'titular_direccion','modalidad','asistencia','plan','cubre_a','pago',
+    'valor_empresa','valor_colaborador','valor_mensual','mascota'];
+  COLS_PERSONA.forEach(k => c.push('conyuge_' + k));
+  for (let i = 1; i <= 4; i++) COLS_PERSONA.forEach(k => c.push(`hijo${i}_${k}`));
+  for (let i = 1; i <= 2; i++) { c.push(`adicional${i}_parentesco`); COLS_PERSONA.forEach(k => c.push(`adicional${i}_${k}`)); }
+  for (let i = 1; i <= 3; i++) c.push(`beneficiario${i}_nombre`, `beneficiario${i}_parentesco`,
+    `beneficiario${i}_tipo_doc`, `beneficiario${i}_num_doc`, `beneficiario${i}_fecha_nac`, `beneficiario${i}_porcentaje`);
+  return c;
+})();
+
+const $ = s => document.querySelector(s);
+let clave = '';          // solo en memoria: al cerrar la pestaña se pide de nuevo
+let registros = [];
+
+const esc = v => String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const fechaHora = iso => new Date(iso).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' });
+const pesos = v => v === '' || v == null ? '' : '$' + Number(v).toLocaleString('es-CO');
+
+async function cargar() {
+  const r = await fetch('/api/admin', { method: 'POST', headers: { 'x-admin-password': clave } });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'No se pudieron cargar las inscripciones.');
+  registros = data.filas || [];
+}
+
+function pintar() {
+  const q = $('#q').value.trim().toLowerCase();
+  const lista = !q ? registros : registros.filter(({ datos: d }) =>
+    [d.titular_num_doc, d.titular_nombres, d.titular_apellidos, d.empresa, d.nit]
+      .some(v => String(v || '').toLowerCase().includes(q)));
+  $('#tbody').innerHTML = lista.map(({ recibido_en, datos: d }) => `<tr>
+    <td>${esc(fechaHora(recibido_en))}</td>
+    <td>${esc(d.empresa)}</td>
+    <td>${esc([d.titular_nombres, d.titular_apellidos].filter(Boolean).join(' '))}</td>
+    <td>${esc([d.titular_tipo_doc, d.titular_num_doc].filter(Boolean).join(' '))}</td>
+    <td>${esc(d.asistencia)}</td>
+    <td>${esc(d.plan)}${d.mascota ? ' · ' + esc(d.mascota) : ''}</td>
+    <td class="num">${esc(pesos(d.valor_mensual))}</td>
+    <td>${esc(d.asesor)}</td></tr>`).join('');
+  $('#vacio').hidden = registros.length > 0;
+  $('#count').textContent = registros.length === 0 ? '' :
+    (q ? `${lista.length} de ${registros.length} filas` : `${registros.length} filas (una por asistencia)`);
+  $('#csv').disabled = registros.length === 0;
+}
+
+function descargarCSV() {
+  const extra = new Set();
+  registros.forEach(({ datos }) => Object.keys(datos).forEach(k => { if (!COLS.includes(k)) extra.add(k); }));
+  const cols = ['recibido_en', ...COLS, ...extra];
+  const cel = v => { const s = String(v ?? ''); return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lineas = [...registros].reverse().map(({ recibido_en, datos }) =>
+    cols.map(k => cel(k === 'recibido_en' ? fechaHora(recibido_en) : datos[k])).join(';'));
+  const csv = '\uFEFF' + [cols.join(';'), ...lineas].join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `Inscripciones_Bienestar360_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+$('#login').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('#entrar'), err = $('#loginErr');
+  btn.disabled = true; btn.textContent = 'Verificando…'; err.hidden = true;
+  clave = $('#pwd').value;
+  try {
+    await cargar();
+    $('#pwd').value = '';
+    $('#login').hidden = true; $('#panel').hidden = false;
+    pintar(); $('#q').focus();
+  } catch (x) {
+    clave = ''; err.textContent = x.message; err.hidden = false;
+  }
+  btn.disabled = false; btn.textContent = 'Ver inscripciones';
+});
+
+$('#q').addEventListener('input', pintar);
+$('#csv').addEventListener('click', descargarCSV);
+$('#recargar').addEventListener('click', async () => {
+  const btn = $('#recargar'), err = $('#panelErr');
+  btn.disabled = true; err.hidden = true;
+  try { await cargar(); pintar(); } catch (x) { err.textContent = x.message; err.hidden = false; }
+  btn.disabled = false;
+});
+$('#salir').addEventListener('click', () => {
+  clave = ''; registros = []; $('#tbody').innerHTML = ''; $('#q').value = '';
+  $('#panel').hidden = true; $('#login').hidden = false; $('#pwd').focus();
+});
+</script>
+</body>
+</html>
