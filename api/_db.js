@@ -3,6 +3,10 @@ import { neon } from '@neondatabase/serverless';
 
 export const sql = neon(process.env.DATABASE_URL);
 
+// Las bajas van a su propia tabla. Si se define BAJAS_DATABASE_URL en Vercel,
+// se guardan además en otra base de datos distinta; si no, usan la misma conexión.
+export const sqlBajas = process.env.BAJAS_DATABASE_URL ? neon(process.env.BAJAS_DATABASE_URL) : sql;
+
 let tablaLista = false;
 export async function asegurarTabla() {
   if (tablaLista) return;
@@ -23,6 +27,35 @@ export async function asegurarTabla() {
   await sql`CREATE INDEX IF NOT EXISTS inscripciones_doc_idx ON inscripciones (titular_num_doc)`;
   await sql`CREATE INDEX IF NOT EXISTS inscripciones_empresa_idx ON inscripciones (empresa)`;
   tablaLista = true;
+}
+
+let tablaBajasLista = false;
+export async function asegurarTablaBajas() {
+  if (tablaBajasLista) return;
+  await sqlBajas`CREATE TABLE IF NOT EXISTS bajas (
+    id               BIGSERIAL PRIMARY KEY,
+    recibido_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    empresa          TEXT NOT NULL,
+    asesor           TEXT NOT NULL,
+    titular_nombre   TEXT NOT NULL,
+    titular_tipo_doc TEXT,
+    titular_num_doc  TEXT NOT NULL,
+    asistencia       TEXT NOT NULL,
+    plan             TEXT NOT NULL,
+    valor_mensual    BIGINT NOT NULL,
+    motivo           TEXT,
+    datos            JSONB NOT NULL
+  )`;
+  await sqlBajas`CREATE INDEX IF NOT EXISTS bajas_doc_idx ON bajas (titular_num_doc)`;
+  await sqlBajas`CREATE INDEX IF NOT EXISTS bajas_empresa_idx ON bajas (empresa)`;
+  tablaBajasLista = true;
+}
+
+// Solo se aceptan envíos desde este mismo sitio.
+export function origenValido(req) {
+  const origen = req.headers.origin;
+  if (!origen) return true;
+  try { return new URL(origen).host === req.headers.host; } catch { return false; }
 }
 
 export function ipDe(req) {

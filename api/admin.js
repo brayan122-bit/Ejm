@@ -1,6 +1,6 @@
-// Entrega las inscripciones a la página /admin, solo con la contraseña correcta.
+// Entrega las inscripciones y las bajas a la página /admin, solo con la contraseña correcta.
 import crypto from 'node:crypto';
-import { sql, asegurarTabla, ipDe, crearLimitador } from './_db.js';
+import { sql, sqlBajas, asegurarTabla, asegurarTablaBajas, ipDe, crearLimitador } from './_db.js';
 
 const fallos = crearLimitador(8, 15 * 60 * 1000); // 8 intentos fallidos por IP cada 15 minutos
 
@@ -31,11 +31,14 @@ export default async function handler(req, res) {
   }
 
   try {
-    await asegurarTabla();
-    const filas = await sql`SELECT id, recibido_en, datos FROM inscripciones ORDER BY id DESC LIMIT 20000`;
-    return res.status(200).json({ filas });
+    await Promise.all([asegurarTabla(), asegurarTablaBajas()]);
+    const [filas, bajas] = await Promise.all([
+      sql`SELECT id, recibido_en, datos FROM inscripciones ORDER BY id DESC LIMIT 20000`,
+      sqlBajas`SELECT id, recibido_en, datos FROM bajas ORDER BY id DESC LIMIT 20000`
+    ]);
+    return res.status(200).json({ filas, bajas });
   } catch (e) {
-    console.error('Error leyendo inscripciones:', e && e.message ? e.message.slice(0, 200) : 'desconocido');
-    return res.status(500).json({ error: 'No se pudieron leer las inscripciones.' });
+    console.error('Error leyendo datos:', e && e.message ? e.message.slice(0, 200) : 'desconocido');
+    return res.status(500).json({ error: 'No se pudieron leer los registros.' });
   }
 }
