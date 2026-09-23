@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Inscripciones recibidas · Bienestar 360</title>
+<title>Inscripciones y bajas · Bienestar 360</title>
 <style>
 :root{
   --red:#E61400; --red-dark:#B30F00; --red-tint:#FFF3F0;
@@ -44,25 +44,33 @@ tr:last-child td{border-bottom:0}
 td.num{text-align:right;font-variant-numeric:tabular-nums}
 .vacio{padding:36px 16px;text-align:center;color:var(--muted)}
 [hidden]{display:none!important}
+.tabs{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;max-width:360px;margin-bottom:16px}
+.tabs button{flex:1;border:0;background:transparent;padding:10px 12px;border-right:1px solid var(--line)}
+.tabs button:last-child{border-right:0}
+.tabs button[aria-selected=true]{background:var(--red);color:#fff;font-weight:700}
 </style>
 </head>
 <body>
 <header class="top"><div class="top-in">
-  <h1>Inscripciones recibidas</h1>
+  <h1>Inscripciones y bajas recibidas</h1>
   <p>Enel Bienestar 360 · Acceso restringido</p>
 </div></header>
 
 <main>
   <form class="login" id="login">
     <h2>Ingresar</h2>
-    <p>Escriba la contraseña de administración para ver las inscripciones.</p>
+    <p>Escriba la contraseña de administración para ver las inscripciones y las bajas.</p>
     <label for="pwd">Contraseña</label>
     <input type="password" id="pwd" autocomplete="current-password" required>
-    <button class="btn" id="entrar" type="submit">Ver inscripciones</button>
+    <button class="btn" id="entrar" type="submit">Ingresar</button>
     <div class="err" id="loginErr" hidden></div>
   </form>
 
   <section id="panel" hidden>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tabIns" aria-selected="true">Inscripciones</button>
+      <button type="button" role="tab" id="tabBaj" aria-selected="false">Bajas</button>
+    </div>
     <div class="bar">
       <div class="buscar">
         <label for="q">Buscar por cédula, nombre o empresa</label>
@@ -76,13 +84,10 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="err" id="panelErr" hidden></div>
     <div class="tabla">
       <table>
-        <thead><tr>
-          <th>Recibido</th><th>Empresa</th><th>Titular</th><th>Documento</th>
-          <th>Asistencia</th><th>Plan</th><th>Valor mensual</th><th>Asesor</th>
-        </tr></thead>
+        <thead id="thead"></thead>
         <tbody id="tbody"></tbody>
       </table>
-      <div class="vacio" id="vacio" hidden>Aún no hay inscripciones. Aparecerán aquí cuando alguien genere una desde el formulario.</div>
+      <div class="vacio" id="vacio" hidden></div>
     </div>
   </section>
 </main>
@@ -107,6 +112,10 @@ const COLS = (() => {
 const $ = s => document.querySelector(s);
 let clave = '';          // solo en memoria: al cerrar la pestaña se pide de nuevo
 let registros = [];
+let bajas = [];
+let vista = 'ins';      // 'ins' = inscripciones, 'baj' = bajas
+const COLS_BAJAS = ['fecha','empresa','asesor','titular_nombre','titular_tipo_doc','titular_num_doc',
+  'asistencia','plan','valor_mensual','motivo'];
 
 const esc = v => String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const fechaHora = iso => new Date(iso).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' });
@@ -117,14 +126,20 @@ async function cargar() {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || 'No se pudieron cargar las inscripciones.');
   registros = data.filas || [];
+  bajas = data.bajas || [];
 }
 
 function pintar() {
   const q = $('#q').value.trim().toLowerCase();
-  const lista = !q ? registros : registros.filter(({ datos: d }) =>
-    [d.titular_num_doc, d.titular_nombres, d.titular_apellidos, d.empresa, d.nit]
-      .some(v => String(v || '').toLowerCase().includes(q)));
-  $('#tbody').innerHTML = lista.map(({ recibido_en, datos: d }) => `<tr>
+  const esIns = vista === 'ins';
+  const base = esIns ? registros : bajas;
+  const campos = d => esIns ? [d.titular_num_doc, d.titular_nombres, d.titular_apellidos, d.empresa, d.nit]
+                            : [d.titular_num_doc, d.titular_nombre, d.empresa, d.asesor];
+  const lista = !q ? base : base.filter(({ datos: d }) => campos(d).some(v => String(v || '').toLowerCase().includes(q)));
+  $('#thead').innerHTML = esIns
+    ? '<tr><th>Recibido</th><th>Empresa</th><th>Titular</th><th>Documento</th><th>Asistencia</th><th>Plan</th><th>Valor mensual</th><th>Asesor</th></tr>'
+    : '<tr><th>Recibido</th><th>Empresa</th><th>Titular</th><th>Documento</th><th>Asistencia</th><th>Plan</th><th>Valor mensual</th><th>Asesor</th><th>Motivo</th></tr>';
+  $('#tbody').innerHTML = lista.map(({ recibido_en, datos: d }) => esIns ? `<tr>
     <td>${esc(fechaHora(recibido_en))}</td>
     <td>${esc(d.empresa)}</td>
     <td>${esc([d.titular_nombres, d.titular_apellidos].filter(Boolean).join(' '))}</td>
@@ -132,24 +147,46 @@ function pintar() {
     <td>${esc(d.asistencia)}</td>
     <td>${esc(d.plan)}${d.mascota ? ' · ' + esc(d.mascota) : ''}</td>
     <td class="num">${esc(pesos(d.valor_mensual))}</td>
-    <td>${esc(d.asesor)}</td></tr>`).join('');
-  $('#vacio').hidden = registros.length > 0;
-  $('#count').textContent = registros.length === 0 ? '' :
-    (q ? `${lista.length} de ${registros.length} filas` : `${registros.length} filas (una por asistencia)`);
-  $('#csv').disabled = registros.length === 0;
+    <td>${esc(d.asesor)}</td></tr>` : `<tr>
+    <td>${esc(fechaHora(recibido_en))}</td>
+    <td>${esc(d.empresa)}</td>
+    <td>${esc(d.titular_nombre)}</td>
+    <td>${esc([d.titular_tipo_doc, d.titular_num_doc].filter(Boolean).join(' '))}</td>
+    <td>${esc(d.asistencia)}</td>
+    <td>${esc(d.plan)}</td>
+    <td class="num">${esc(pesos(d.valor_mensual))}</td>
+    <td>${esc(d.asesor)}</td>
+    <td>${esc(d.motivo)}</td></tr>`).join('');
+  $('#vacio').textContent = esIns
+    ? 'Aún no hay inscripciones. Aparecerán aquí cuando alguien genere una desde el formulario.'
+    : 'Aún no hay bajas. Aparecerán aquí cuando alguien registre una desde la pestaña Bajas del formulario.';
+  $('#vacio').hidden = base.length > 0;
+  $('#count').textContent = base.length === 0 ? '' :
+    (q ? `${lista.length} de ${base.length} filas` : esIns ? `${base.length} filas (una por asistencia)` : `${base.length} bajas`);
+  $('#csv').disabled = base.length === 0;
+}
+
+function cambiarVista(v) {
+  vista = v;
+  $('#tabIns').setAttribute('aria-selected', v === 'ins');
+  $('#tabBaj').setAttribute('aria-selected', v === 'baj');
+  pintar();
 }
 
 function descargarCSV() {
+  const esIns = vista === 'ins';
+  const base = esIns ? registros : bajas;
+  const colsBase = esIns ? COLS : COLS_BAJAS;
   const extra = new Set();
-  registros.forEach(({ datos }) => Object.keys(datos).forEach(k => { if (!COLS.includes(k)) extra.add(k); }));
-  const cols = ['recibido_en', ...COLS, ...extra];
+  base.forEach(({ datos }) => Object.keys(datos).forEach(k => { if (!colsBase.includes(k)) extra.add(k); }));
+  const cols = ['recibido_en', ...colsBase, ...extra];
   const cel = v => { const s = String(v ?? ''); return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-  const lineas = [...registros].reverse().map(({ recibido_en, datos }) =>
+  const lineas = [...base].reverse().map(({ recibido_en, datos }) =>
     cols.map(k => cel(k === 'recibido_en' ? fechaHora(recibido_en) : datos[k])).join(';'));
   const csv = '\uFEFF' + [cols.join(';'), ...lineas].join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = `Inscripciones_Bienestar360_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `${esIns ? 'Inscripciones' : 'Bajas'}_Bienestar360_${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
@@ -167,10 +204,12 @@ $('#login').addEventListener('submit', async e => {
   } catch (x) {
     clave = ''; err.textContent = x.message; err.hidden = false;
   }
-  btn.disabled = false; btn.textContent = 'Ver inscripciones';
+  btn.disabled = false; btn.textContent = 'Ingresar';
 });
 
 $('#q').addEventListener('input', pintar);
+$('#tabIns').addEventListener('click', () => cambiarVista('ins'));
+$('#tabBaj').addEventListener('click', () => cambiarVista('baj'));
 $('#csv').addEventListener('click', descargarCSV);
 $('#recargar').addEventListener('click', async () => {
   const btn = $('#recargar'), err = $('#panelErr');
@@ -179,7 +218,7 @@ $('#recargar').addEventListener('click', async () => {
   btn.disabled = false;
 });
 $('#salir').addEventListener('click', () => {
-  clave = ''; registros = []; $('#tbody').innerHTML = ''; $('#q').value = '';
+  clave = ''; registros = []; bajas = []; $('#tbody').innerHTML = ''; $('#q').value = '';
   $('#panel').hidden = true; $('#login').hidden = false; $('#pwd').focus();
 });
 </script>

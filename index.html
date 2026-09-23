@@ -218,6 +218,18 @@ table.reg th{font-weight:700;color:var(--muted);font-size:12.5px;background:var(
 .po[role=checkbox] .dot{border-radius:4px}
 .po[role=checkbox][aria-checked=true] .dot::after{border-radius:2px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+/* Pestañas de trámite y módulo de bajas */
+[hidden]{display:none!important}
+.modtabs{background:#fff;border-bottom:1px solid var(--line)}
+.modtabs-in{max-width:1180px;margin:0 auto;padding:12px 20px}
+.modtabs .seg{max-width:440px}
+.bajas{max-width:860px;margin:0 auto;padding:28px 20px 90px}
+.bajas .card{border:1px solid var(--line);border-radius:8px;padding:20px;background:#fff}
+.bajas .card + .card{margin-top:16px}
+.bajas .card h3{font-size:16px;margin:0 0 14px}
+.bajas select:disabled{opacity:.6;cursor:not-allowed}
+.bajas-acc{display:flex;justify-content:flex-end;gap:10px;margin-top:20px;flex-wrap:wrap}
+.req{color:var(--red)}
 </style>
 </head>
 <body>
@@ -235,6 +247,13 @@ table.reg th{font-weight:700;color:var(--muted);font-size:12.5px;background:var(
     </div>
   </div>
 </header>
+
+<div class="modtabs"><div class="modtabs-in">
+  <div class="seg" role="group" aria-label="Tipo de trámite">
+    <button type="button" id="tabInscripcion" aria-pressed="true">Nueva inscripción</button>
+    <button type="button" id="tabBajas" aria-pressed="false">Bajas</button>
+  </div>
+</div></div>
 
 <nav class="rail" aria-label="Pasos"><ol id="rail"></ol></nav>
 
@@ -257,6 +276,56 @@ table.reg th{font-weight:700;color:var(--muted);font-size:12.5px;background:var(
   <button class="btn primary" id="btnNext">Siguiente</button>
 </div></div>
 <div class="toast" id="toast" role="status"></div>
+
+<!-- =====================  MÓDULO DE BAJAS  ===================== -->
+<section class="bajas" id="moduloBajas" hidden aria-labelledby="bajasTitulo">
+  <div class="step-h">
+    <h2 id="bajasTitulo">Solicitud de baja</h2>
+    <p>Registre el retiro de un titular de una asistencia del convenio. Las bajas se guardan en una base separada de las inscripciones.</p>
+  </div>
+  <div class="notice ok" id="bajaOk" hidden></div>
+  <form id="formBajas" novalidate>
+    <div class="card">
+      <h3>Convenio</h3>
+      <div class="grid">
+        <div class="f s6"><label for="bajaEmpresa">Empresa <span class="req">*</span></label>
+          <input type="text" id="bajaEmpresa" maxlength="150" autocomplete="organization"><div class="msg"></div></div>
+        <div class="f s6"><label for="bajaAsesor">Asesor <span class="req">*</span></label>
+          <input type="text" id="bajaAsesor" maxlength="150"><div class="msg"></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Titular</h3>
+      <div class="grid">
+        <div class="f s6"><label for="bajaTitular">Nombre completo del titular <span class="req">*</span></label>
+          <input type="text" id="bajaTitular" maxlength="150" autocomplete="off"><div class="msg"></div></div>
+        <div class="f s3"><label for="bajaTipoDoc">Tipo de documento</label>
+          <select id="bajaTipoDoc">
+            <option value="CC">CC</option><option value="CE">CE</option><option value="PA">PA</option><option value="PPT">PPT</option><option value="TI">TI</option>
+          </select></div>
+        <div class="f s3"><label for="bajaDocumento">Documento <span class="req">*</span></label>
+          <input type="text" id="bajaDocumento" maxlength="20" inputmode="numeric" autocomplete="off"><div class="msg"></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Asistencia que se da de baja</h3>
+      <div class="grid">
+        <div class="f s6"><label for="bajaAsistencia">Asistencia <span class="req">*</span></label>
+          <select id="bajaAsistencia"><option value="">Seleccione la asistencia</option></select><div class="msg"></div></div>
+        <div class="f s6"><label for="bajaPlan">Plan <span class="req">*</span></label>
+          <select id="bajaPlan" disabled><option value="">Primero elija la asistencia</option></select><div class="msg"></div></div>
+        <div class="f s6"><label for="bajaValor">Valor mensual (COP) <span class="req">*</span></label>
+          <input type="text" id="bajaValor" inputmode="numeric" maxlength="15" placeholder="$0" autocomplete="off"><div class="msg"></div></div>
+        <div class="f"><label for="bajaMotivo">Motivo de la baja <span class="opt">(opcional)</span></label>
+          <textarea id="bajaMotivo" maxlength="500" placeholder="Describa brevemente la razón del retiro"></textarea></div>
+      </div>
+    </div>
+    <div class="bajas-acc">
+      <button type="button" class="btn ghost" id="btnLimpiarBaja">Limpiar</button>
+      <button type="submit" class="btn primary" id="btnEnviarBaja">Registrar baja</button>
+    </div>
+  </form>
+</section>
 
 <script>!function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"function"==typeof define&&define.amd?define(["exports"],e):e((t=t||self).PDFLib={})}(this,(function(t){"use strict";
 /*! *****************************************************************************
@@ -1323,6 +1392,111 @@ window.addEventListener('beforeunload', e => { if(registros.length && !exportado
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(()=>{ if(STEPS[cur].id==='pago') initPad(); }, 200); });
 render();
 
+</script>
+<script>
+/* =====================================================================
+   MÓDULO DE BAJAS — usa el mismo CATALOGO de asistencias y planes
+   ===================================================================== */
+(() => {
+  const BAJAS_URL = '/api/baja';
+  const el = id => document.getElementById(id);
+  const form = el('formBajas'), selA = el('bajaAsistencia'), selP = el('bajaPlan'), valor = el('bajaValor');
+
+  // 1. Pestañas: alternan entre inscripción y bajas.
+  const vistasInscripcion = [document.querySelector('nav.rail'), document.querySelector('main.layout'),
+                             document.querySelector('div.actions'), document.querySelector('.session')];
+  function cambiarModulo(mod){
+    const bajas = mod === 'bajas';
+    vistasInscripcion.forEach(v => { if(v) v.hidden = bajas; });
+    el('moduloBajas').hidden = !bajas;
+    el('tabInscripcion').setAttribute('aria-pressed', !bajas);
+    el('tabBajas').setAttribute('aria-pressed', bajas);
+    document.querySelector('.top h1').textContent = bajas ? 'Bajas Asistencias Enel Bienestar 360' : 'Inscripción Asistencias Enel Bienestar 360';
+    window.scrollTo(0, 0);
+  }
+  el('tabInscripcion').addEventListener('click', () => cambiarModulo('inscripcion'));
+  el('tabBajas').addEventListener('click', () => cambiarModulo('bajas'));
+
+  // 2. Asistencias: se llenan desde el mismo catálogo del formulario de inscripción.
+  CATALOGO.forEach(gr => {
+    const o = document.createElement('option'); o.value = gr.g; o.textContent = gr.t; selA.appendChild(o);
+  });
+  function llenarPlanes(){
+    const gr = CATALOGO.find(g => g.g === selA.value);
+    selP.innerHTML = '';
+    const ph = document.createElement('option'); ph.value = '';
+    ph.textContent = gr ? 'Seleccione el plan' : 'Primero elija la asistencia';
+    selP.appendChild(ph);
+    if(gr) gr.o.forEach(p => { const o = document.createElement('option'); o.value = p.v; o.textContent = p.n; selP.appendChild(o); });
+    selP.disabled = !gr;
+  }
+  selA.addEventListener('change', () => { llenarPlanes(); limpiarError(selA); });
+  selP.addEventListener('change', () => limpiarError(selP));
+
+  // 3. Valor mensual con formato de pesos.
+  valor.addEventListener('input', () => { const d = valor.value.replace(/\D/g, ''); valor.value = d ? pesos(d) : ''; });
+  el('bajaDocumento').addEventListener('input', e => { e.target.value = e.target.value.replace(/[^0-9A-Za-z]/g, ''); });
+
+  // Validación con el mismo estilo de errores del formulario.
+  function marcar(campo, txt){ const f = campo.closest('.f'); f.classList.add('err'); f.querySelector('.msg').textContent = txt; }
+  function limpiarError(campo){ const f = campo.closest('.f'); if(f){ f.classList.remove('err'); const m = f.querySelector('.msg'); if(m) m.textContent = ''; } }
+  form.addEventListener('input', e => limpiarError(e.target));
+  function validar(){
+    form.querySelectorAll('.f.err').forEach(f => { f.classList.remove('err'); const m = f.querySelector('.msg'); if(m) m.textContent = ''; });
+    const reglas = [
+      [el('bajaEmpresa'), v => v.trim().length >= 2, 'Escriba la empresa.'],
+      [el('bajaAsesor'), v => v.trim().length >= 3, 'Escriba el nombre del asesor.'],
+      [el('bajaTitular'), v => v.trim().split(/\s+/).length >= 2, 'Escriba nombres y apellidos del titular.'],
+      [el('bajaDocumento'), v => /^[0-9A-Za-z]{4,20}$/.test(v), 'Escriba un documento válido.'],
+      [selA, v => !!v, 'Seleccione la asistencia.'],
+      [selP, v => !!v, 'Seleccione el plan.'],
+      [valor, v => num(v) > 0, 'Escriba el valor mensual.']
+    ];
+    let primero = null;
+    reglas.forEach(([c, ok, txt]) => { if(!ok(c.value)){ marcar(c, txt); primero = primero || c; } });
+    if(primero){ primero.focus(); return false; }
+    return true;
+  }
+
+  function limpiar(conservarConvenio){
+    const emp = el('bajaEmpresa').value, ase = el('bajaAsesor').value;
+    form.reset(); llenarPlanes();
+    form.querySelectorAll('.f.err').forEach(f => f.classList.remove('err'));
+    form.querySelectorAll('.msg').forEach(m => m.textContent = '');
+    if(conservarConvenio){ el('bajaEmpresa').value = emp; el('bajaAsesor').value = ase; }
+  }
+  el('btnLimpiarBaja').addEventListener('click', () => { limpiar(false); el('bajaOk').hidden = true; });
+
+  // 4. Envío a la base de bajas (tabla separada en Neon).
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    if(!validar()) return;
+    const gr = CATALOGO.find(g => g.g === selA.value), pl = gr.o.find(p => p.v === selP.value);
+    const payload = {
+      empresa: el('bajaEmpresa').value.trim(), asesor: el('bajaAsesor').value.trim(),
+      titular_nombre: el('bajaTitular').value.trim().replace(/\s+/g, ' '),
+      titular_tipo_doc: el('bajaTipoDoc').value, titular_num_doc: el('bajaDocumento').value.trim(),
+      asistencia_id: gr.g, asistencia: gr.corto, plan_id: pl.v, plan: pl.n,
+      valor_mensual: num(valor.value), motivo: el('bajaMotivo').value.trim(), fecha: hoy()
+    };
+    const btn = el('btnEnviarBaja'); btn.disabled = true; btn.textContent = 'Registrando…';
+    try {
+      const r = await fetch(BAJAS_URL, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(payload) });
+      const data = await r.json().catch(() => ({}));
+      if(!r.ok) throw new Error(data.error || 'No se pudo registrar la baja.');
+      const ok = el('bajaOk');
+      ok.innerHTML = `<strong>Baja registrada.</strong> ${esc(payload.titular_nombre)} (${esc(payload.titular_tipo_doc)} ${esc(payload.titular_num_doc)}) · ${esc(gr.corto)} ${esc(pl.n)} · ${esc(pesos(payload.valor_mensual))}`;
+      ok.hidden = false;
+      limpiar(true);
+      toast('Solicitud de baja registrada.');
+      window.scrollTo(0, 0);
+    } catch(x) {
+      toast(x.message === 'Failed to fetch' ? 'Sin conexión. Intente de nuevo.' : x.message);
+    } finally {
+      btn.disabled = false; btn.textContent = 'Registrar baja';
+    }
+  });
+})();
 </script>
 </body>
 </html>
