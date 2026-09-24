@@ -1,226 +1,456 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Inscripciones y bajas · Bienestar 360</title>
-<style>
-:root{
-  --red:#E61400; --red-dark:#B30F00; --red-tint:#FFF3F0;
-  --blue:#0555FA; --ink:#262626; --muted:#626873; --line:#DDE1E7; --surface:#F4F5F7;
-}
-*{box-sizing:border-box}
-html,body{margin:0}
-body{font-family:Arial,Helvetica,sans-serif;color:var(--ink);background:var(--surface);font-size:15px;line-height:1.45}
-button,input{font:inherit}
-button{cursor:pointer}
-:focus-visible{outline:3px solid rgba(5,85,250,.45);outline-offset:2px}
-.top{background:var(--red);color:#fff}
-.top-in{max-width:1180px;margin:0 auto;padding:16px 20px}
-.top h1{font-size:17px;margin:0}
-.top p{margin:2px 0 0;font-size:12.5px;opacity:.92}
-main{max-width:1180px;margin:0 auto;padding:24px 20px 48px}
-.login{max-width:380px;margin:40px auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:24px}
-.login h2{font-size:18px;margin:0 0 6px}
-.login p{margin:0 0 16px;color:var(--muted);font-size:14px}
-label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}
-input[type=password],input[type=search]{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:#fff}
-.btn{border:0;border-radius:6px;padding:10px 16px;font-weight:700;background:var(--red);color:#fff}
-.btn:hover{background:var(--red-dark)}
-.btn.sec{background:#fff;color:var(--ink);border:1px solid var(--line)}
-.btn.sec:hover{background:var(--surface)}
-.btn:disabled{opacity:.5;cursor:default}
-.login .btn{width:100%;margin-top:14px}
-.err{color:var(--red-dark);background:var(--red-tint);border-radius:6px;padding:8px 10px;font-size:13.5px;margin-top:12px}
-.bar{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin-bottom:14px}
-.bar .buscar{flex:1 1 280px}
-.count{color:var(--muted);font-size:13.5px;margin:0 0 10px}
-.tabla{background:#fff;border:1px solid var(--line);border-radius:8px;overflow-x:auto}
-table{border-collapse:collapse;width:100%;font-size:13.5px}
-th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
-th{background:var(--surface);font-size:12.5px;color:var(--muted);position:sticky;top:0}
-tr:last-child td{border-bottom:0}
-td.num{text-align:right;font-variant-numeric:tabular-nums}
-.vacio{padding:36px 16px;text-align:center;color:var(--muted)}
-[hidden]{display:none!important}
-.tabs{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;max-width:360px;margin-bottom:16px}
-.tabs button{flex:1;border:0;background:transparent;padding:10px 12px;border-right:1px solid var(--line)}
-.tabs button:last-child{border-right:0}
-.tabs button[aria-selected=true]{background:var(--red);color:#fff;font-weight:700}
-</style>
+<title>Administración · Asistencias Bienestar 360</title>
+<link rel="stylesheet" href="/app.css">
 </head>
 <body>
 <header class="top"><div class="top-in">
-  <h1>Inscripciones y bajas recibidas</h1>
-  <p>Bienestar 360 · Acceso restringido</p>
+  <p class="brand">Asistencias Bienestar 360<small>Validación y conciliación</small></p>
+  <div class="who" id="who"></div>
 </div></header>
 
 <main>
-  <form class="login" id="login">
-    <h2>Ingresar</h2>
-    <p>Escriba la contraseña de administración para ver las inscripciones y las bajas.</p>
-    <label for="pwd">Contraseña</label>
-    <input type="password" id="pwd" autocomplete="current-password" required>
-    <button class="btn" id="entrar" type="submit">Ingresar</button>
-    <div class="err" id="loginErr" hidden></div>
-  </form>
+  <div class="notice info" id="cargando">Cargando…</div>
+  <div class="notice bad" id="errorCarga" hidden></div>
+  <div id="app" hidden>
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="solicitudes" aria-selected="true">Solicitudes del mes <span class="cnt" id="cntPend" hidden></span></button>
+      <button type="button" role="tab" data-tab="consolidado" aria-selected="false">Consolidado</button>
+      <button type="button" role="tab" data-tab="empresas" aria-selected="false" data-admin>Empresas</button>
+      <button type="button" role="tab" data-tab="usuarios" aria-selected="false" data-admin>Usuarios</button>
+    </nav>
 
-  <section id="panel" hidden>
-    <div class="tabs" role="tablist">
-      <button type="button" role="tab" id="tabIns" aria-selected="true">Inscripciones</button>
-      <button type="button" role="tab" id="tabBaj" aria-selected="false">Bajas</button>
-    </div>
-    <div class="bar">
-      <div class="buscar">
-        <label for="q">Buscar por cédula, nombre o empresa</label>
-        <input type="search" id="q" placeholder="Ej.: 1020304050 o nombre de la empresa">
+    <!-- ============ SOLICITUDES ============ -->
+    <section data-panel="solicitudes">
+      <div class="bar">
+        <div><label for="sPeriodo">Mes</label><select id="sPeriodo" style="min-width:160px"></select></div>
+        <div><label for="sEmpresa">Empresa</label><select id="sEmpresa" class="selEmpresas" style="min-width:200px"></select></div>
+        <div><label for="sTipo">Tipo</label><select id="sTipo"><option value="">Altas y bajas</option><option value="alta">Altas</option><option value="baja">Bajas</option></select></div>
+        <div><label for="sEstado">Estado</label><select id="sEstado"><option value="pendiente">Pendientes</option><option value="">Todos</option><option value="valida">Válidas</option><option value="invalida">Inválidas</option></select></div>
+        <label class="chkline"><input type="checkbox" id="sAlertas"> Solo con alertas</label>
+        <div class="grow"><label for="sQ">Buscar</label><input type="search" id="sQ" placeholder="Cédula, nombre o empresa"></div>
+        <button type="button" class="btn sec" id="sRecargar">Actualizar</button>
       </div>
-      <button class="btn sec" id="recargar" type="button">Actualizar</button>
-      <button class="btn" id="csv" type="button">Descargar Excel (CSV)</button>
-      <button class="btn sec" id="salir" type="button">Salir</button>
-    </div>
-    <p class="count" id="count"></p>
-    <div class="err" id="panelErr" hidden></div>
-    <div class="tabla">
-      <table>
-        <thead id="thead"></thead>
-        <tbody id="tbody"></tbody>
-      </table>
-      <div class="vacio" id="vacio" hidden></div>
-    </div>
-  </section>
+      <div class="kpis" id="sKpis"></div>
+      <div class="tabla"><table>
+        <thead><tr><th><input type="checkbox" id="sTodos" aria-label="Seleccionar todos"></th><th>#</th><th>Recibida</th><th>Empresa</th><th>Tipo</th>
+          <th>Titular</th><th>Asistencia · plan</th><th class="num">Valor</th><th>Validaciones automáticas</th><th>Estado</th></tr></thead>
+        <tbody id="sTb"></tbody>
+      </table><div class="vacio" id="sVacio" hidden></div></div>
+      <div class="bulk">
+        <span class="n" id="sSel">0 seleccionadas</span>
+        <button type="button" class="lnk" id="sLimpias">Seleccionar pendientes sin alertas</button>
+        <button type="button" class="btn ok sm" id="sValida" disabled>Marcar válidas</button>
+        <button type="button" class="btn sm" id="sInvalida" disabled>Marcar inválidas…</button>
+        <button type="button" class="btn sec sm" id="sPendiente" disabled>Volver a pendiente</button>
+        <button type="button" class="btn sec sm" id="sCsv">Descargar novedades (CSV)</button>
+      </div>
+    </section>
+
+    <!-- ============ CONSOLIDADO ============ -->
+    <section data-panel="consolidado" hidden>
+      <div class="bar">
+        <div><label for="cEmpresa">Empresa</label><select id="cEmpresa" class="selEmpresas" style="min-width:220px"></select></div>
+        <div class="grow"><label for="cQ">Buscar</label><input type="search" id="cQ" placeholder="Cédula o nombre"></div>
+        <a class="btn sec" id="cPortal" style="display:inline-flex;align-items:center;text-decoration:none" hidden>Ver como la empresa</a>
+        <button type="button" class="btn sec" id="cImportar">Cargar consolidado inicial…</button>
+        <button type="button" class="btn" id="cCsv">Descargar para CRM (CSV)</button>
+      </div>
+      <div class="kpis" id="cKpis"></div>
+      <p class="muted" id="cCuenta" style="margin:0 0 8px;font-size:13px"></p>
+      <div class="tabla"><table>
+        <thead><tr><th>Empresa</th><th>Titular</th><th>Documento</th><th>Asistencia</th><th>Plan</th><th>Pago</th><th class="num">Personas</th><th class="num">Valor mensual</th><th>Desde</th><th>Origen</th></tr></thead>
+        <tbody id="cTb"></tbody>
+      </table><div class="vacio" id="cVacio" hidden>No hay asistencias activas.</div></div>
+    </section>
+
+    <!-- ============ EMPRESAS ============ -->
+    <section data-panel="empresas" hidden>
+      <div class="bar"><div class="grow"><h3 style="margin:0">Empresas del convenio</h3><p class="muted" style="margin:2px 0 0;font-size:13px">El modelo define quién paga y si aplica el descuento. Los productos habilitados limitan lo que la empresa puede inscribir.</p></div>
+        <button type="button" class="btn" id="eNueva">Nueva empresa</button></div>
+      <div class="tabla"><table>
+        <thead><tr><th>Empresa</th><th>NIT</th><th>Modelo</th><th>Productos habilitados</th><th class="num">Asistencias activas</th><th class="num">Usuarios</th><th>Estado</th><th></th></tr></thead>
+        <tbody id="eTb"></tbody>
+      </table><div class="vacio" id="eVacio" hidden>Aún no hay empresas. Cree la primera.</div></div>
+    </section>
+
+    <!-- ============ USUARIOS ============ -->
+    <section data-panel="usuarios" hidden>
+      <div class="bar"><div class="grow"><h3 style="margin:0">Usuarios</h3><p class="muted" style="margin:2px 0 0;font-size:13px">Empresa: solo ve y envía lo de su empresa. Validador: revisa solicitudes y consolidado. Administrador: además gestiona empresas y usuarios.</p></div>
+        <button type="button" class="btn" id="uNuevo">Nuevo usuario</button></div>
+      <div class="tabla"><table>
+        <thead><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Empresa</th><th>Último ingreso</th><th>Estado</th><th></th></tr></thead>
+        <tbody id="uTb"></tbody>
+      </table></div>
+    </section>
+  </div>
 </main>
 
+<!-- Detalle de una solicitud -->
+<dialog id="dDet"><div class="dlg-h"><h3 id="dDetT"></h3><button class="x" onclick="this.closest('dialog').close()" aria-label="Cerrar">×</button></div>
+  <div class="dlg-b" id="dDetB"></div>
+  <div class="dlg-f"><button class="btn sec" onclick="this.closest('dialog').close()">Cerrar</button></div></dialog>
+
+<!-- Motivo de invalidez -->
+<dialog id="dInv"><div class="dlg-h"><h3>Marcar como inválidas</h3><button class="x" onclick="this.closest('dialog').close()" aria-label="Cerrar">×</button></div>
+  <div class="dlg-b">
+    <p style="margin-top:0">La empresa verá este motivo en su panel para corregir y volver a enviar el formulario.</p>
+    <label for="iMotivo">Motivo</label><textarea id="iMotivo" maxlength="500" style="height:96px"></textarea>
+    <p class="lab" style="margin-top:12px">Motivos frecuentes</p>
+    <div id="iRapidos" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+    <div class="notice bad" id="iErr" hidden style="margin-top:12px"></div>
+  </div>
+  <div class="dlg-f"><button class="btn sec" onclick="this.closest('dialog').close()">Cancelar</button><button class="btn" id="iOk">Marcar inválidas</button></div></dialog>
+
+<!-- Empresa -->
+<dialog id="dEmp"><div class="dlg-h"><h3 id="dEmpT">Empresa</h3><button class="x" onclick="this.closest('dialog').close()" aria-label="Cerrar">×</button></div>
+  <div class="dlg-b"><div class="grid2">
+    <div class="full"><label for="eNombre">Nombre de la empresa</label><input type="text" id="eNombre" maxlength="150"></div>
+    <div><label for="eNit">NIT</label><input type="text" id="eNit" maxlength="15" inputmode="numeric" placeholder="900123456"></div>
+    <div><label for="eModelo">Modelo</label><select id="eModelo"><option value="1">Modelo 1 · El colaborador paga por nómina</option><option value="2">Modelo 2 · La empresa paga o cofinancia (descuento)</option></select></div>
+    <div class="full"><label class="chkline" style="height:auto"><input type="checkbox" id="eActiva"> Empresa activa (sus usuarios pueden ingresar)</label></div>
+    <div class="full"><span class="lab">Productos habilitados <button type="button" class="lnk" id="eTodos">Marcar todos</button> · <button type="button" class="lnk" id="eNinguno">Quitar todos</button></span>
+      <div class="prods" id="eProds"></div></div>
+    <div class="full notice bad" id="eErr" hidden></div>
+  </div></div>
+  <div class="dlg-f"><button class="btn sec" onclick="this.closest('dialog').close()">Cancelar</button><button class="btn" id="eOk">Guardar</button></div></dialog>
+
+<!-- Usuario -->
+<dialog id="dUsu"><div class="dlg-h"><h3 id="dUsuT">Usuario</h3><button class="x" onclick="this.closest('dialog').close()" aria-label="Cerrar">×</button></div>
+  <div class="dlg-b"><div class="grid2">
+    <div><label for="uNombre">Nombre</label><input type="text" id="uNombre" maxlength="150"></div>
+    <div><label for="uEmail">Correo</label><input type="email" id="uEmail" maxlength="200"></div>
+    <div><label for="uRol">Rol</label><select id="uRol"><option value="empresa">Empresa</option><option value="validador">Validador</option><option value="admin">Administrador</option></select></div>
+    <div id="uEmpWrap"><label for="uEmpresa">Empresa</label><select id="uEmpresa" class="selEmpresasObl"></select></div>
+    <div class="full"><label class="chkline" style="height:auto"><input type="checkbox" id="uActivo"> Usuario activo</label></div>
+    <div class="full notice bad" id="uErr" hidden></div>
+  </div></div>
+  <div class="dlg-f"><button class="btn sec" onclick="this.closest('dialog').close()">Cancelar</button><button class="btn" id="uOk">Guardar</button></div></dialog>
+
+<!-- Contraseña temporal -->
+<dialog id="dClaveT"><div class="dlg-h"><h3>Contraseña temporal</h3><button class="x" onclick="this.closest('dialog').close()" aria-label="Cerrar">×</button></div>
+  <div class="dlg-b"><p style="margin-top:0" id="ctTxt"></p><div class="clave" id="ctClave"></div>
+    <p class="muted" style="font-size:13px">Cópiela ahora: no se vuelve a mostrar. Pídale al usuario que la cambie al ingresar (opción «Cambiar contraseña»).</p></div>
+  <div class="dlg-f"><button class="btn sec" id="ctCopiar">Copiar</button><button class="btn" onclick="this.closest('dialog').close()">Listo</button></div></dialog>
+
+<!-- Importar consolidado -->
+<dialog id="dImp"><div class="dlg-h"><h3>Cargar consolidado inicial</h3><button class="x" onclick="this.closest('dialog').close()" aria-label="Cerrar">×</button></div>
+  <div class="dlg-b">
+    <p style="margin-top:0">Para cargar las personas que <strong>ya tienen</strong> la asistencia antes de usar el formulario. Un archivo por empresa. Las filas que ya existan activas se omiten.</p>
+    <div class="grid2">
+      <div class="full"><label for="impEmpresa">Empresa</label><select id="impEmpresa" class="selEmpresasObl"></select></div>
+      <div class="full"><label for="impArchivo">Archivo CSV (separado por ; o ,)</label><input type="file" id="impArchivo" accept=".csv,text/csv"></div>
+    </div>
+    <p style="font-size:13px">Columnas: <code>titular_num_doc</code>, <code>titular_nombre</code>, <code>asistencia</code>, <code>plan</code>, <code>valor_mensual</code>, y opcionales <code>titular_tipo_doc</code>, <code>personas</code>, <code>pago</code> (Nomina, Empresa o Cofinanciado), <code>mascota</code>.
+      <button type="button" class="lnk" id="impPlantilla">Descargar plantilla</button></p>
+    <div id="impInfo"></div>
+  </div>
+  <div class="dlg-f"><button class="btn sec" onclick="this.closest('dialog').close()">Cancelar</button><button class="btn" id="impOk" disabled>Cargar</button></div></dialog>
+
+<script src="/app.js"></script>
 <script>
-// Mismo orden de columnas que el consolidado del formulario.
-const COLS_PERSONA = ['nombres','apellidos','tipo_doc','num_doc','fecha_nac','genero'];
-const COLS = (() => {
-  const c = ['id_inscripcion','fecha','asesor','empresa','nit','pagador_nombre','pagador_cedula',
-    'titular_nombres','titular_apellidos','titular_tipo_doc','titular_num_doc','titular_fecha_nac',
-    'titular_edad','titular_genero','titular_celular','titular_correo','titular_ciudad','titular_barrio',
-    'titular_direccion','modalidad','asistencia','plan','cubre_a','pago',
-    'valor_empresa','valor_colaborador','valor_mensual','mascota'];
-  COLS_PERSONA.forEach(k => c.push('conyuge_' + k));
-  for (let i = 1; i <= 4; i++) COLS_PERSONA.forEach(k => c.push(`hijo${i}_${k}`));
-  for (let i = 1; i <= 2; i++) { c.push(`adicional${i}_parentesco`); COLS_PERSONA.forEach(k => c.push(`adicional${i}_${k}`)); }
-  for (let i = 1; i <= 3; i++) c.push(`beneficiario${i}_nombre`, `beneficiario${i}_parentesco`,
-    `beneficiario${i}_tipo_doc`, `beneficiario${i}_num_doc`, `beneficiario${i}_fecha_nac`, `beneficiario${i}_porcentaje`);
-  return c;
-})();
+let SES = null, EMPRESAS = [], PRODUCTOS = [], SOL = null, CONS = [], USUARIOS = [];
+const sel = new Set();
+const esAdmin = () => SES.usuario.rol === 'admin';
+const PAGO_TXT = { Nomina: 'Nómina', Empresa: 'Empresa', Cofinanciado: 'Cofinanciado' };
 
-const $ = s => document.querySelector(s);
-let clave = '';          // solo en memoria: al cerrar la pestaña se pide de nuevo
-let registros = [];
-let bajas = [];
-let vista = 'ins';      // 'ins' = inscripciones, 'baj' = bajas
-const COLS_BAJAS = ['fecha','empresa','asesor','titular_nombre','titular_tipo_doc','titular_num_doc',
-  'asistencia','plan','valor_mensual','motivo'];
+function abrirTab(t) {
+  $$('[data-tab]').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === t));
+  $$('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== t);
+  if (t === 'consolidado') cargarConsolidado().catch(x => toast(x.message));
+  if (t === 'empresas') cargarEmpresas().catch(x => toast(x.message));
+  if (t === 'usuarios') cargarUsuarios().catch(x => toast(x.message));
+}
+$$('[data-tab]').forEach(b => b.onclick = () => abrirTab(b.dataset.tab));
 
-const esc = v => String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-const fechaHora = iso => new Date(iso).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' });
-const pesos = v => v === '' || v == null ? '' : '$' + Number(v).toLocaleString('es-CO');
-
-async function cargar() {
-  const r = await fetch('/api/admin', { method: 'POST', headers: { 'x-admin-password': clave } });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || 'No se pudieron cargar las inscripciones.');
-  registros = data.filas || [];
-  bajas = data.bajas || [];
+function pintarSelectEmpresas() {
+  const ops = EMPRESAS.map(e => `<option value="${e.id}">${esc(e.nombre)}${e.activa === false ? ' (inactiva)' : ''}</option>`).join('');
+  $$('.selEmpresas').forEach(s => { const v = s.value; s.innerHTML = '<option value="">Todas las empresas</option>' + ops; s.value = v; });
+  $$('.selEmpresasObl').forEach(s => { const v = s.value; s.innerHTML = '<option value="">Seleccione…</option>' + ops; s.value = v; });
 }
 
-function pintar() {
-  const q = $('#q').value.trim().toLowerCase();
-  const esIns = vista === 'ins';
-  const base = esIns ? registros : bajas;
-  const campos = d => esIns ? [d.titular_num_doc, d.titular_nombres, d.titular_apellidos, d.empresa, d.nit]
-                            : [d.titular_num_doc, d.titular_nombre, d.empresa, d.asesor];
-  const lista = !q ? base : base.filter(({ datos: d }) => campos(d).some(v => String(v || '').toLowerCase().includes(q)));
-  $('#thead').innerHTML = esIns
-    ? '<tr><th>Recibido</th><th>Empresa</th><th>Titular</th><th>Documento</th><th>Asistencia</th><th>Plan</th><th>Valor mensual</th><th>Asesor</th></tr>'
-    : '<tr><th>Recibido</th><th>Empresa</th><th>Titular</th><th>Documento</th><th>Asistencia</th><th>Plan</th><th>Valor mensual</th><th>Asesor</th><th>Motivo</th></tr>';
-  $('#tbody').innerHTML = lista.map(({ recibido_en, datos: d }) => esIns ? `<tr>
-    <td>${esc(fechaHora(recibido_en))}</td>
-    <td>${esc(d.empresa)}</td>
-    <td>${esc([d.titular_nombres, d.titular_apellidos].filter(Boolean).join(' '))}</td>
-    <td>${esc([d.titular_tipo_doc, d.titular_num_doc].filter(Boolean).join(' '))}</td>
-    <td>${esc(d.asistencia)}</td>
-    <td>${esc(d.plan)}${d.mascota ? ' · ' + esc(d.mascota) : ''}</td>
-    <td class="num">${esc(pesos(d.valor_mensual))}</td>
-    <td>${esc(d.asesor)}</td></tr>` : `<tr>
-    <td>${esc(fechaHora(recibido_en))}</td>
-    <td>${esc(d.empresa)}</td>
-    <td>${esc(d.titular_nombre)}</td>
-    <td>${esc([d.titular_tipo_doc, d.titular_num_doc].filter(Boolean).join(' '))}</td>
-    <td>${esc(d.asistencia)}</td>
-    <td>${esc(d.plan)}</td>
-    <td class="num">${esc(pesos(d.valor_mensual))}</td>
-    <td>${esc(d.asesor)}</td>
-    <td>${esc(d.motivo)}</td></tr>`).join('');
-  $('#vacio').textContent = esIns
-    ? 'Aún no hay inscripciones. Aparecerán aquí cuando alguien genere una desde el formulario.'
-    : 'Aún no hay bajas. Aparecerán aquí cuando alguien registre una desde la pestaña Bajas del formulario.';
-  $('#vacio').hidden = base.length > 0;
-  $('#count').textContent = base.length === 0 ? '' :
-    (q ? `${lista.length} de ${base.length} filas` : esIns ? `${base.length} filas (una por asistencia)` : `${base.length} bajas`);
-  $('#csv').disabled = base.length === 0;
+/* ==================== SOLICITUDES ==================== */
+async function cargarSolicitudes() {
+  SOL = await api('/api/admin', { method: 'POST', body: { accion: 'solicitudes', periodo: $('#sPeriodo').value || undefined } });
+  $('#sPeriodo').innerHTML = SOL.periodos.map(p => `<option value="${p}" ${p === SOL.periodo ? 'selected' : ''}>${esc(nombreMes(p))}${p === SOL.periodo_actual ? ' (actual)' : ''}</option>`).join('');
+  const vivos = new Set(SOL.filas.map(f => f.id)); [...sel].forEach(id => { if (!vivos.has(id)) sel.delete(id); });
+  pintarSolicitudes();
+}
+function filtradas() {
+  const e = $('#sEmpresa').value, t = $('#sTipo').value, st = $('#sEstado').value, al = $('#sAlertas').checked, q = $('#sQ').value.trim().toLowerCase();
+  return SOL.filas.filter(s => (!e || String(s.empresa_id) === e) && (!t || s.tipo === t) && (!st || s.estado === st) &&
+    (!al || s.alertas.length) && (!q || [s.titular_num_doc, s.titular_nombre, s.empresa_nombre, s.empresa_nit].some(v => String(v || '').toLowerCase().includes(q))));
+}
+function pintarSolicitudes() {
+  const lista = filtradas();
+  const base = SOL.filas.filter(s => !$('#sEmpresa').value || String(s.empresa_id) === $('#sEmpresa').value);
+  const cnt = st => base.filter(s => s.estado === st).length;
+  const pend = SOL.filas.filter(s => s.estado === 'pendiente').length;
+  $('#cntPend').textContent = pend; $('#cntPend').hidden = !pend;
+  $('#sKpis').innerHTML = [
+    ['Recibidas en el mes', base.length, `${base.filter(s => s.tipo === 'alta').length} altas · ${base.filter(s => s.tipo === 'baja').length} bajas`],
+    ['Pendientes', cnt('pendiente'), `${base.filter(s => s.estado === 'pendiente' && s.alertas.length).length} con alertas`],
+    ['Válidas', cnt('valida'), 'Ya aplicadas al consolidado', 'ok'],
+    ['Inválidas', cnt('invalida'), 'Visibles para la empresa']
+  ].map(([l, v, d, c]) => `<div class="kpi ${c || ''}"><div class="l">${l}</div><div class="v">${numero(v)}</div><div class="d">${esc(d)}</div></div>`).join('');
+  $('#sTb').innerHTML = lista.map(s => `<tr class="click ${sel.has(s.id) ? 'sel' : ''}" data-id="${s.id}">
+    <td><input type="checkbox" data-sel="${s.id}" ${sel.has(s.id) ? 'checked' : ''} aria-label="Seleccionar ${s.id}"></td>
+    <td class="nw">${s.id}</td><td class="nw">${esc(fechaHora(s.recibido_en))}</td>
+    <td>${esc(s.empresa_nombre)}<small class="muted">NIT ${esc(s.empresa_nit)}</small></td>
+    <td><span class="tag ${s.tipo}">${s.tipo === 'alta' ? 'Alta' : 'Baja'}</span></td>
+    <td>${esc(s.titular_nombre)}<small class="muted">${esc(s.titular_num_doc)}</small></td>
+    <td>${esc(s.asistencia)} · ${esc(s.plan)}${s.mascota ? `<small class="muted">${esc(s.mascota)}</small>` : ''}</td>
+    <td class="num">${s.valor_mensual ? pesos(s.valor_mensual) : ''}</td>
+    <td>${s.alertas.length ? s.alertas.map(a => `<span class="al">${esc(a.texto)}</span>`).join('') : '<span class="muted" style="font-size:12.5px">Sin alertas</span>'}</td>
+    <td><span class="tag ${s.estado}">${ESTADOS[s.estado]}</span>${s.estado === 'invalida' && s.motivo ? `<span class="motivo">${esc(s.motivo)}</span>` : ''}
+      ${s.validado_por_nombre ? `<small class="muted">${esc(s.validado_por_nombre)}</small>` : ''}</td></tr>`).join('');
+  $('#sVacio').hidden = lista.length > 0;
+  $('#sVacio').textContent = SOL.filas.length ? 'No hay solicitudes con esos filtros.' : `No llegaron solicitudes en ${nombreMes(SOL.periodo)}.`;
+  $('#sTodos').checked = lista.length > 0 && lista.every(s => sel.has(s.id));
+  pintarSeleccion();
+}
+function pintarSeleccion() {
+  $('#sSel').textContent = `${sel.size} seleccionada${sel.size === 1 ? '' : 's'}`;
+  ['#sValida', '#sInvalida', '#sPendiente'].forEach(b => $(b).disabled = !sel.size);
+}
+$('#sTb').addEventListener('click', e => {
+  const cb = e.target.closest('[data-sel]');
+  if (cb) { const id = +cb.dataset.sel; cb.checked ? sel.add(id) : sel.delete(id); cb.closest('tr').classList.toggle('sel', cb.checked); pintarSeleccion(); return; }
+  const tr = e.target.closest('tr[data-id]'); if (tr) verDetalle(+tr.dataset.id);
+});
+$('#sTodos').onchange = e => { filtradas().forEach(s => e.target.checked ? sel.add(s.id) : sel.delete(s.id)); pintarSolicitudes(); };
+$('#sLimpias').onclick = () => { sel.clear(); filtradas().filter(s => s.estado === 'pendiente' && !s.alertas.length).forEach(s => sel.add(s.id)); pintarSolicitudes(); toast(`${sel.size} seleccionadas.`); };
+['#sEmpresa', '#sTipo', '#sEstado', '#sAlertas'].forEach(i => $(i).onchange = () => { sel.clear(); pintarSolicitudes(); });
+$('#sQ').oninput = pintarSolicitudes;
+$('#sPeriodo').onchange = () => { sel.clear(); cargarSolicitudes().catch(x => toast(x.message)); };
+$('#sRecargar').onclick = () => cargarSolicitudes().then(() => toast('Actualizado.')).catch(x => toast(x.message));
+
+const ETIQ = { fecha: 'Fecha', empresa: 'Empresa', nit: 'NIT', asesor: 'Asesor', motivo: 'Motivo de la baja', modalidad: 'Modalidad', pago: 'Forma de pago',
+  cubre_a: 'Cubre a', valor_mensual: 'Valor mensual', valor_empresa: 'Paga la empresa', valor_colaborador: 'Paga el colaborador',
+  aut_datos: 'Autoriza tratamiento de datos', aut_descuento: 'Autoriza descuento por nómina', firma_modo: 'Firma', mascota: 'Mascota' };
+const OCULTAR = new Set(['id_inscripcion', 'asistencia_id', 'plan_id', 'pago_id']);
+function verDetalle(id) {
+  const s = SOL.filas.find(x => x.id === id); if (!s) return;
+  $('#dDetT').textContent = `Solicitud #${s.id} · ${s.tipo === 'alta' ? 'Alta' : 'Baja'}`;
+  const campos = Object.entries(s.datos || {}).filter(([k, v]) => !OCULTAR.has(k) && String(v ?? '').trim() !== '');
+  $('#dDetB').innerHTML = `
+    ${s.alertas.length ? `<div class="notice warn"><strong>Validaciones automáticas</strong><ul>${s.alertas.map(a => `<li>${esc(a.texto)}</li>`).join('')}</ul></div>` : '<div class="notice ok">Sin alertas automáticas.</div>'}
+    ${s.estado === 'invalida' ? `<div class="notice bad"><strong>Inválida:</strong> ${esc(s.motivo)}</div>` : ''}
+    <dl class="det">
+      <dt>Empresa</dt><dd>${esc(s.empresa_nombre)} · NIT ${esc(s.empresa_nit)}</dd>
+      <dt>Asistencia</dt><dd>${esc(s.asistencia)} · ${esc(s.plan)}</dd>
+      <dt>Estado</dt><dd><span class="tag ${s.estado}">${ESTADOS[s.estado]}</span> ${s.validado_por_nombre ? esc('por ' + s.validado_por_nombre + ' · ' + fechaHora(s.validado_en)) : ''}</dd>
+      ${campos.map(([k, v]) => `<dt>${esc(ETIQ[k] || k.replace(/_/g, ' '))}</dt><dd>${esc(/^valor/.test(k) ? pesos(v) : v)}</dd>`).join('')}
+    </dl>`;
+  $('#dDet').showModal();
 }
 
-function cambiarVista(v) {
-  vista = v;
-  $('#tabIns').setAttribute('aria-selected', v === 'ins');
-  $('#tabBaj').setAttribute('aria-selected', v === 'baj');
-  pintar();
+async function validar(estado, motivo) {
+  const ids = [...sel];
+  const r = await api('/api/admin', { method: 'POST', body: { accion: 'validar', ids, estado, motivo } });
+  sel.clear(); await cargarSolicitudes();
+  toast(`${ids.length} registro${ids.length === 1 ? '' : 's'} en estado «${ESTADOS[estado]}».`);
+  if (r.avisos && r.avisos.length) alert(r.avisos.join('\n'));
 }
+$('#sValida').onclick = () => {
+  const conAl = [...sel].map(id => SOL.filas.find(s => s.id === id)).filter(s => s && s.alertas.length).length;
+  if (conAl && !confirm(`${conAl} de los registros seleccionados tienen alertas automáticas. ¿Marcarlos como válidos de todas formas?`)) return;
+  validar('valida').catch(x => toast(x.message));
+};
+$('#sPendiente').onclick = () => validar('pendiente').catch(x => toast(x.message));
+$('#sInvalida').onclick = () => {
+  const textos = new Set(['Faltan datos obligatorios. Complete el formulario y envíelo de nuevo.', 'La persona ya tiene esta asistencia activa.',
+    'Registro duplicado en el mes.', 'Falta la autorización de descuento por nómina firmada.']);
+  [...sel].forEach(id => (SOL.filas.find(s => s.id === id)?.alertas || []).forEach(a => textos.add(a.texto)));
+  $('#iRapidos').innerHTML = [...textos].slice(0, 10).map(t => `<button type="button" class="btn sec sm" data-m="${esc(t)}">${esc(t)}</button>`).join('');
+  $('#iMotivo').value = ''; $('#iErr').hidden = true; $('#dInv').showModal(); $('#iMotivo').focus();
+};
+$('#iRapidos').onclick = e => { const b = e.target.closest('[data-m]'); if (!b) return; const m = $('#iMotivo'); m.value = (m.value.trim() ? m.value.trim() + ' ' : '') + b.dataset.m; };
+$('#iOk').onclick = async () => {
+  try { await validar('invalida', $('#iMotivo').value.trim()); $('#dInv').close(); }
+  catch (x) { $('#iErr').textContent = x.message; $('#iErr').hidden = false; }
+};
+$('#sCsv').onclick = () => {
+  const lista = filtradas(); if (!lista.length) return toast('No hay registros para descargar.');
+  const claves = new Set(); lista.forEach(s => Object.keys(s.datos || {}).forEach(k => claves.add(k)));
+  const cols = [['id', 'solicitud'], [s => fechaHora(s.recibido_en), 'recibida'], ['tipo', 'tipo'], [s => ESTADOS[s.estado], 'estado'], ['motivo', 'motivo_invalidez'],
+    [s => s.alertas.map(a => a.texto).join(' | '), 'alertas'], ['empresa_nombre', 'empresa'], ['empresa_nit', 'nit_empresa'],
+    ['titular_num_doc', 'documento'], ['titular_nombre', 'titular'], ['asistencia', 'asistencia'], ['plan', 'plan'], ['valor_mensual', 'valor'],
+    ...[...claves].filter(k => !['empresa', 'nit'].includes(k)).map(k => [s => (s.datos || {})[k], k])];
+  descargarCSV(`Novedades_${SOL.periodo}_${new Date().toISOString().slice(0, 10)}.csv`, cols, lista);
+};
 
-function descargarCSV() {
-  const esIns = vista === 'ins';
-  const base = esIns ? registros : bajas;
-  const colsBase = esIns ? COLS : COLS_BAJAS;
-  const extra = new Set();
-  base.forEach(({ datos }) => Object.keys(datos).forEach(k => { if (!colsBase.includes(k)) extra.add(k); }));
-  const cols = ['recibido_en', ...colsBase, ...extra];
-  const cel = v => { const s = String(v ?? ''); return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-  const lineas = [...base].reverse().map(({ recibido_en, datos }) =>
-    cols.map(k => cel(k === 'recibido_en' ? fechaHora(recibido_en) : datos[k])).join(';'));
-  const csv = '\uFEFF' + [cols.join(';'), ...lineas].join('\r\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = `${esIns ? 'Inscripciones' : 'Bajas'}_Bienestar360_${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+/* ==================== CONSOLIDADO ==================== */
+async function cargarConsolidado() {
+  const eid = $('#cEmpresa').value;
+  const [d, portal] = await Promise.all([
+    api('/api/admin', { method: 'POST', body: { accion: 'consolidado', empresa_id: eid || undefined } }),
+    eid ? api('/api/portal?empresa_id=' + eid) : null
+  ]);
+  CONS = d.filas;
+  $('#cPortal').hidden = !eid; $('#cPortal').href = '/portal?empresa_id=' + eid;
+  const tot = CONS.reduce((a, c) => a + c.valor_mensual, 0);
+  const k = portal ? portal.resumen : null;
+  $('#cKpis').innerHTML = (k ? [
+    ['Titulares', numero(k.titulares)], ['Personas cubiertas', numero(k.personas)], ['Asistencias', numero(k.asistencias)],
+    ['Valor mensual', pesos(k.valor_total)], ...(portal.empresa.modelo === 2 ? [[`Total a pagar (−${k.descuento_pct} %)`, pesos(k.total_a_pagar)]] : [])
+  ] : [['Empresas', numero(new Set(CONS.map(c => c.empresa_id)).size)], ['Titulares', numero(new Set(CONS.map(c => c.empresa_id + ':' + c.titular_num_doc)).size)],
+    ['Asistencias', numero(CONS.length)], ['Valor mensual (sin descuentos)', pesos(tot)]])
+    .map(([l, v]) => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div></div>`).join('');
+  pintarConsolidado();
 }
+function pintarConsolidado() {
+  const q = $('#cQ').value.trim().toLowerCase();
+  const lista = CONS.filter(c => !q || [c.titular_num_doc, c.titular_nombre].some(v => String(v || '').toLowerCase().includes(q)));
+  const max = 1500;
+  $('#cTb').innerHTML = lista.slice(0, max).map(c => `<tr><td>${esc(c.empresa_nombre)}</td><td>${esc(c.titular_nombre)}</td>
+    <td class="nw">${esc(c.titular_num_doc)}</td><td>${esc(c.asistencia)}</td><td>${esc(c.plan)}${c.mascota ? `<small class="muted">${esc(c.mascota)}</small>` : ''}</td>
+    <td>${esc(PAGO_TXT[c.pago] || '')}</td><td class="num">${numero(c.personas)}</td><td class="num">${pesos(c.valor_mensual)}</td>
+    <td class="nw">${esc(c.fecha_alta_txt || '')}</td><td>${c.origen === 'importado' ? 'Carga inicial' : 'Formulario'}</td></tr>`).join('');
+  $('#cVacio').hidden = lista.length > 0;
+  $('#cCuenta').textContent = `${lista.length} asistencias activas${lista.length > max ? ` (se muestran ${max}; use la búsqueda o descargue el CSV)` : ''}`;
+}
+$('#cEmpresa').onchange = () => cargarConsolidado().catch(x => toast(x.message));
+$('#cQ').oninput = pintarConsolidado;
+$('#cCsv').onclick = () => {
+  if (!CONS.length) return toast('No hay datos para descargar.');
+  const claves = new Set(); CONS.forEach(c => Object.keys(c.datos || {}).forEach(k => claves.add(k)));
+  const cols = [['empresa_nombre', 'empresa'], ['empresa_nit', 'nit'], ['titular_num_doc', 'titular_num_doc'], ['titular_nombre', 'titular_nombre'],
+    ['asistencia', 'asistencia'], ['plan', 'plan'], ['mascota', 'mascota'], [c => PAGO_TXT[c.pago] || '', 'pago'], ['valor_mensual', 'valor_mensual'],
+    ['valor_empresa', 'valor_empresa'], ['valor_colaborador', 'valor_colaborador'], ['personas', 'personas_cubiertas'], ['fecha_alta_txt', 'fecha_alta'],
+    ['origen', 'origen'], ...[...claves].filter(k => !['empresa', 'nit', 'titular_num_doc', 'asistencia', 'plan', 'mascota', 'valor_mensual', 'valor_empresa', 'valor_colaborador'].includes(k))
+      .map(k => [c => (c.datos || {})[k], k])];
+  const emp = $('#cEmpresa').value ? EMPRESAS.find(e => String(e.id) === $('#cEmpresa').value).nombre.replace(/[^\w]+/g, '_') : 'Todas';
+  descargarCSV(`Consolidado_CRM_${emp}_${new Date().toISOString().slice(0, 10)}.csv`, cols, CONS);
+};
 
-$('#login').addEventListener('submit', async e => {
-  e.preventDefault();
-  const btn = $('#entrar'), err = $('#loginErr');
-  btn.disabled = true; btn.textContent = 'Verificando…'; err.hidden = true;
-  clave = $('#pwd').value;
+// Importación del consolidado inicial
+let IMP = [];
+$('#cImportar').onclick = () => { $('#impEmpresa').value = $('#cEmpresa').value; $('#impArchivo').value = ''; $('#impInfo').innerHTML = ''; IMP = []; $('#impOk').disabled = true; $('#dImp').showModal(); };
+$('#impPlantilla').onclick = () => descargarCSV('Plantilla_consolidado.csv',
+  [['a', 'titular_num_doc'], ['b', 'titular_nombre'], ['c', 'titular_tipo_doc'], ['d', 'asistencia'], ['e', 'plan'], ['f', 'valor_mensual'], ['g', 'personas'], ['h', 'pago'], ['i', 'mascota']],
+  [{ a: '1020304050', b: 'Nombre Apellido', c: 'CC', d: 'Doctor 360', e: 'Light', f: '25000', g: '3', h: 'Nomina', i: '' },
+   { a: '1020304050', b: 'Nombre Apellido', c: 'CC', d: 'Protección Hogar', e: 'Hogar Mascotas', f: '12000', g: '1', h: 'Nomina', i: 'Luna (perro)' }]);
+$('#impArchivo').onchange = async e => {
+  const f = e.target.files[0]; IMP = []; $('#impOk').disabled = true; if (!f) return;
+  const txt = await f.text(); const filas = leerCSV(txt);
+  const alias = { documento: 'titular_num_doc', cedula: 'titular_num_doc', num_doc: 'titular_num_doc', nombre: 'titular_nombre', titular: 'titular_nombre',
+    tipo_doc: 'titular_tipo_doc', valor: 'valor_mensual', personas_cubiertas: 'personas' };
+  IMP = filas.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [alias[k] || k, v])));
+  const faltan = ['titular_num_doc', 'titular_nombre', 'asistencia', 'plan'].filter(k => IMP.length && !(k in IMP[0]));
+  $('#impInfo').innerHTML = !IMP.length ? '<div class="notice bad">El archivo está vacío.</div>'
+    : faltan.length ? `<div class="notice bad">Faltan columnas: ${faltan.join(', ')}</div>`
+    : `<div class="notice info">${IMP.length} filas listas para cargar.</div>`;
+  $('#impOk').disabled = !IMP.length || faltan.length > 0;
+};
+$('#impOk').onclick = async () => {
+  if (!$('#impEmpresa').value) return toast('Elija la empresa.');
+  $('#impOk').disabled = true;
   try {
-    await cargar();
-    $('#pwd').value = '';
-    $('#login').hidden = true; $('#panel').hidden = false;
-    pintar(); $('#q').focus();
+    const r = await api('/api/admin', { method: 'POST', body: { accion: 'importar', empresa_id: $('#impEmpresa').value, filas: IMP } });
+    $('#dImp').close(); toast(`Cargadas ${r.cargadas}. Omitidas por estar ya activas: ${r.omitidas}.`);
+    $('#cEmpresa').value = $('#impEmpresa').value; cargarConsolidado();
   } catch (x) {
-    clave = ''; err.textContent = x.message; err.hidden = false;
+    $('#impInfo').innerHTML = `<div class="notice bad"><strong>${esc(x.message)}</strong>${x.datos && x.datos.errores ? `<ul>${x.datos.errores.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}</div>`;
+    $('#impOk').disabled = false;
   }
-  btn.disabled = false; btn.textContent = 'Ingresar';
-});
+};
 
-$('#q').addEventListener('input', pintar);
-$('#tabIns').addEventListener('click', () => cambiarVista('ins'));
-$('#tabBaj').addEventListener('click', () => cambiarVista('baj'));
-$('#csv').addEventListener('click', descargarCSV);
-$('#recargar').addEventListener('click', async () => {
-  const btn = $('#recargar'), err = $('#panelErr');
-  btn.disabled = true; err.hidden = true;
-  try { await cargar(); pintar(); } catch (x) { err.textContent = x.message; err.hidden = false; }
-  btn.disabled = false;
-});
-$('#salir').addEventListener('click', () => {
-  clave = ''; registros = []; bajas = []; $('#tbody').innerHTML = ''; $('#q').value = '';
-  $('#panel').hidden = true; $('#login').hidden = false; $('#pwd').focus();
-});
+/* ==================== EMPRESAS ==================== */
+async function cargarEmpresas() {
+  const d = await api('/api/admin', { method: 'POST', body: { accion: 'empresas' } });
+  EMPRESAS = d.filas; PRODUCTOS = d.productos; pintarSelectEmpresas();
+  $('#eTb').innerHTML = EMPRESAS.map(e => `<tr><td><strong>${esc(e.nombre)}</strong></td><td class="nw">${esc(e.nit)}</td>
+    <td>Modelo ${e.modelo}<small class="muted">${e.modelo === 1 ? 'Nómina' : 'Empresa / cofinanciado'}</small></td>
+    <td>${!e.productos.length ? 'Todos' : `${e.productos.length} de ${PRODUCTOS.length}`}</td>
+    <td class="num">${numero(e.activos)}</td><td class="num">${numero(e.usuarios)}</td>
+    <td>${e.activa ? '<span class="tag valida">Activa</span>' : '<span class="tag invalida">Inactiva</span>'}</td>
+    <td class="nw"><button type="button" class="lnk" data-edit="${e.id}">Editar</button> · <a class="lnk" href="/portal?empresa_id=${e.id}">Ver portal</a></td></tr>`).join('');
+  $('#eVacio').hidden = EMPRESAS.length > 0;
+}
+let empEdit = null;
+function abrirEmpresa(e) {
+  empEdit = e || null;
+  $('#dEmpT').textContent = e ? 'Editar empresa' : 'Nueva empresa';
+  $('#eNombre').value = e ? e.nombre : ''; $('#eNit').value = e ? e.nit : ''; $('#eModelo').value = e ? e.modelo : 1; $('#eActiva').checked = e ? e.activa : true;
+  const on = e && e.productos.length ? new Set(e.productos) : new Set(PRODUCTOS.map(p => p.clave));
+  let grupo = '';
+  $('#eProds').innerHTML = PRODUCTOS.map(p => { const h = p.asistencia !== grupo ? `<h4>${esc(p.asistencia)}</h4>` : ''; grupo = p.asistencia;
+    return `${h}<label><input type="checkbox" value="${p.clave}" ${on.has(p.clave) ? 'checked' : ''}> ${esc(p.plan)}</label>`; }).join('');
+  $('#eErr').hidden = true; $('#dEmp').showModal();
+}
+$('#eNueva').onclick = () => abrirEmpresa();
+$('#eTb').onclick = e => { const b = e.target.closest('[data-edit]'); if (b) abrirEmpresa(EMPRESAS.find(x => x.id === +b.dataset.edit)); };
+$('#eTodos').onclick = () => $$('#eProds input').forEach(i => i.checked = true);
+$('#eNinguno').onclick = () => $$('#eProds input').forEach(i => i.checked = false);
+$('#eOk').onclick = async () => {
+  const productos = $$('#eProds input:checked').map(i => i.value);
+  if (!productos.length) { $('#eErr').textContent = 'Habilite al menos un producto.'; $('#eErr').hidden = false; return; }
+  try {
+    await api('/api/admin', { method: 'POST', body: { accion: 'empresa_guardar', id: empEdit && empEdit.id, nombre: $('#eNombre').value, nit: $('#eNit').value,
+      modelo: +$('#eModelo').value, activa: $('#eActiva').checked, productos: productos.length === PRODUCTOS.length ? [] : productos } });
+    $('#dEmp').close(); toast('Empresa guardada.'); cargarEmpresas();
+  } catch (x) { $('#eErr').textContent = x.message; $('#eErr').hidden = false; }
+};
+
+/* ==================== USUARIOS ==================== */
+const ROLES = { admin: 'Administrador', validador: 'Validador', empresa: 'Empresa' };
+async function cargarUsuarios() {
+  if (!EMPRESAS.length) await cargarEmpresas();
+  USUARIOS = (await api('/api/admin', { method: 'POST', body: { accion: 'usuarios' } })).filas;
+  $('#uTb').innerHTML = USUARIOS.map(u => `<tr><td>${esc(u.nombre)}</td><td>${esc(u.email)}</td><td>${ROLES[u.rol]}</td><td>${esc(u.empresa_nombre || '—')}</td>
+    <td class="nw">${u.ultimo_ingreso ? esc(fechaHora(u.ultimo_ingreso)) : '<span class="muted">Nunca</span>'}</td>
+    <td>${u.activo ? '<span class="tag valida">Activo</span>' : '<span class="tag invalida">Inactivo</span>'}</td>
+    <td class="nw"><button type="button" class="lnk" data-uedit="${u.id}">Editar</button> · <button type="button" class="lnk" data-uclave="${u.id}">Nueva contraseña</button></td></tr>`).join('');
+}
+let usuEdit = null;
+function abrirUsuario(u) {
+  usuEdit = u || null;
+  $('#dUsuT').textContent = u ? 'Editar usuario' : 'Nuevo usuario';
+  $('#uNombre').value = u ? u.nombre : ''; $('#uEmail').value = u ? u.email : ''; $('#uRol').value = u ? u.rol : 'empresa';
+  $('#uEmpresa').value = u && u.empresa_id ? u.empresa_id : ''; $('#uActivo').checked = u ? u.activo : true;
+  $('#uEmpWrap').hidden = $('#uRol').value !== 'empresa'; $('#uErr').hidden = true; $('#dUsu').showModal();
+}
+function mostrarClave(txt, clave) { $('#ctTxt').textContent = txt; $('#ctClave').textContent = clave; $('#dClaveT').showModal(); }
+$('#ctCopiar').onclick = () => navigator.clipboard.writeText($('#ctClave').textContent).then(() => toast('Copiada.'));
+$('#uRol').onchange = () => $('#uEmpWrap').hidden = $('#uRol').value !== 'empresa';
+$('#uNuevo').onclick = () => abrirUsuario();
+$('#uTb').onclick = async e => {
+  const ed = e.target.closest('[data-uedit]'); if (ed) return abrirUsuario(USUARIOS.find(u => u.id === +ed.dataset.uedit));
+  const cl = e.target.closest('[data-uclave]'); if (!cl) return;
+  const u = USUARIOS.find(x => x.id === +cl.dataset.uclave);
+  if (!confirm(`¿Generar una contraseña nueva para ${u.nombre}? La actual deja de funcionar y se cierran sus sesiones.`)) return;
+  try { const r = await api('/api/admin', { method: 'POST', body: { accion: 'usuario_clave', id: u.id } }); mostrarClave(`Nueva contraseña de ${u.nombre} (${u.email}):`, r.clave_temporal); }
+  catch (x) { toast(x.message); }
+};
+$('#uOk').onclick = async () => {
+  try {
+    const r = await api('/api/admin', { method: 'POST', body: { accion: 'usuario_guardar', id: usuEdit && usuEdit.id, nombre: $('#uNombre').value, email: $('#uEmail').value,
+      rol: $('#uRol').value, empresa_id: $('#uEmpresa').value || undefined, activo: $('#uActivo').checked } });
+    $('#dUsu').close(); cargarUsuarios();
+    if (r.clave_temporal) mostrarClave(`Usuario creado: ${$('#uEmail').value}. Contraseña temporal:`, r.clave_temporal); else toast('Usuario guardado.');
+  } catch (x) { $('#uErr').textContent = x.message; $('#uErr').hidden = false; }
+};
+
+/* ==================== INICIO ==================== */
+(async () => {
+  try {
+    SES = await api('/api/sesion');
+    if (SES.usuario.rol === 'empresa') { location.replace('/portal'); return; }
+    pintarUsuario(SES, `<a class="link-w" href="/">Diligenciar formulario</a>`);
+    EMPRESAS = SES.empresas.map(e => ({ ...e, activa: true }));
+    if (!esAdmin()) $$('[data-admin]').forEach(b => b.hidden = true);
+    else await cargarEmpresas();
+    pintarSelectEmpresas();
+    await cargarSolicitudes();
+    $('#cargando').hidden = true; $('#app').hidden = false;
+    if (esAdmin() && !EMPRESAS.length) { abrirTab('empresas'); toast('Empiece creando la primera empresa.'); }
+  } catch (x) { $('#cargando').hidden = true; $('#errorCarga').textContent = x.message; $('#errorCarga').hidden = false; }
+})();
 </script>
 </body>
 </html>

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Ingresar · Asistencias Bienestar 360</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="top"><div class="top-in">
+  <p class="brand">Asistencias Bienestar 360<small>Convenio corporativo</small></p>
+</div></header>
+<main>
+  <form class="login" id="form" novalidate>
+    <h2>Ingresar</h2>
+    <p class="sub">Use el correo y la contraseña que le entregó el administrador del convenio.</p>
+    <div class="f"><label for="email">Correo</label><input type="email" id="email" autocomplete="username" required></div>
+    <div class="f"><label for="clave">Contraseña</label><input type="password" id="clave" autocomplete="current-password" required></div>
+    <div class="notice bad" id="err" hidden></div>
+    <button class="btn" id="btn" type="submit">Ingresar</button>
+  </form>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+// Solo se permite volver a una ruta de este mismo sitio.
+function destino(rol) {
+  const n = new URLSearchParams(location.search).get('next') || '';
+  if (/^\/(?!\/)[\w\-./?=&%]*$/.test(n) && !n.startsWith('/login')) return n;
+  return rol === 'empresa' ? '/portal' : '/admin';
+}
+fetch('/api/sesion').then(r => r.ok ? r.json() : null).then(d => { if (d && d.usuario) location.replace(destino(d.usuario.rol)); }).catch(() => {});
+$('#form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('#btn'), err = $('#err');
+  err.hidden = true; btn.disabled = true; btn.textContent = 'Verificando…';
+  try {
+    const r = await fetch('/api/sesion', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: $('#email').value.trim(), clave: $('#clave').value }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'No se pudo ingresar.');
+    location.replace(destino(d.rol));
+  } catch (x) {
+    err.textContent = x.message === 'Failed to fetch' ? 'Sin conexión. Intente de nuevo.' : x.message; err.hidden = false;
+    btn.disabled = false; btn.textContent = 'Ingresar'; $('#clave').select();
+  }
+});
+</script>
+</body>
+</html>

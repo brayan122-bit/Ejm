@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Portal de empresa · Asistencias Bienestar 360</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="top"><div class="top-in">
+  <p class="brand">Asistencias Bienestar 360<small>Portal de empresa</small></p>
+  <div class="who" id="who"></div>
+</div></header>
+
+<main>
+  <div class="notice info" id="cargando">Cargando información…</div>
+  <div class="notice bad" id="errorCarga" hidden></div>
+
+  <div id="app" hidden>
+    <div class="bar">
+      <div class="grow">
+        <h2 id="titEmpresa"></h2>
+        <p class="sub" style="margin:0" id="subEmpresa"></p>
+      </div>
+      <div><label for="periodo">Mes</label><select id="periodo" style="min-width:170px"></select></div>
+      <a class="btn" id="lnkAlta" href="/?modulo=inscripcion" style="display:inline-flex;align-items:center;text-decoration:none">Nueva inscripción</a>
+      <a class="btn sec" id="lnkBaja" href="/?modulo=bajas" style="display:inline-flex;align-items:center;text-decoration:none">Registrar baja</a>
+    </div>
+
+    <div id="avisoInvalidos"></div>
+
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="resumen" aria-selected="true">Conciliación</button>
+      <button type="button" role="tab" data-tab="personas" aria-selected="false">Personas activas</button>
+      <button type="button" role="tab" data-tab="solicitudes" aria-selected="false">Solicitudes del mes <span class="cnt" id="cntInv" hidden></span></button>
+    </nav>
+
+    <!-- Conciliación -->
+    <section data-panel="resumen">
+      <div class="kpis" id="kpis"></div>
+      <div class="card">
+        <h3>Qué tienen contratado</h3>
+        <div class="tabla" style="max-height:none"><table>
+          <thead><tr><th>Asistencia</th><th>Plan</th><th class="num">Personas inscritas</th><th class="num">Valor mensual</th></tr></thead>
+          <tbody id="tbProductos"></tbody><tfoot id="tfProductos"></tfoot>
+        </table><div class="vacio" id="vacioProductos" hidden>Aún no hay asistencias activas.</div></div>
+      </div>
+      <div class="card" id="cardPend"></div>
+    </section>
+
+    <!-- Personas activas -->
+    <section data-panel="personas" hidden>
+      <div class="bar">
+        <div class="grow"><label for="qPersonas">Buscar por cédula o nombre</label><input type="search" id="qPersonas" placeholder="Ej.: 1020304050"></div>
+        <button type="button" class="btn sec" id="csvPersonas">Descargar Excel (CSV)</button>
+      </div>
+      <p class="muted" id="cuentaPersonas" style="margin:0 0 8px;font-size:13px"></p>
+      <div class="tabla"><table>
+        <thead><tr><th>Titular</th><th>Documento</th><th>Asistencia</th><th>Plan</th><th class="num">Personas cubiertas</th><th class="num">Valor mensual</th><th>Desde</th><th></th></tr></thead>
+        <tbody id="tbPersonas"></tbody>
+      </table><div class="vacio" id="vacioPersonas" hidden>No hay personas activas.</div></div>
+    </section>
+
+    <!-- Solicitudes del mes -->
+    <section data-panel="solicitudes" hidden>
+      <div class="bar">
+        <div><label for="fEstado">Estado</label>
+          <select id="fEstado" style="min-width:190px">
+            <option value="">Todas</option><option value="invalida">Por corregir (inválidas)</option>
+            <option value="pendiente">Pendientes de validación</option><option value="valida">Válidas</option>
+          </select></div>
+        <div class="grow"><label for="qSol">Buscar</label><input type="search" id="qSol" placeholder="Cédula o nombre"></div>
+      </div>
+      <div class="tabla"><table>
+        <thead><tr><th>Enviada</th><th>Tipo</th><th>Titular</th><th>Documento</th><th>Asistencia · plan</th><th class="num">Valor</th><th>Estado</th><th></th></tr></thead>
+        <tbody id="tbSol"></tbody>
+      </table><div class="vacio" id="vacioSol" hidden>No hay solicitudes en este mes.</div></div>
+    </section>
+  </div>
+</main>
+
+<script src="/app.js"></script>
+<script>
+let SES = null, D = null;
+const params = new URLSearchParams(location.search);
+const empresaParam = params.get('empresa_id'); // solo lo usa el equipo interno para ver el portal de una empresa
+
+function ruta(base, extra = {}) {
+  const q = new URLSearchParams(extra);
+  if (empresaParam) q.set('empresa_id', empresaParam);
+  const s = q.toString(); return s ? `${base}?${s}` : base;
+}
+
+async function cargar(periodo) {
+  D = await api(ruta('/api/portal', periodo ? { periodo } : {}));
+  pintar();
+}
+
+function pintar() {
+  const e = D.empresa, r = D.resumen;
+  $('#titEmpresa').textContent = e.nombre;
+  $('#subEmpresa').textContent = `NIT ${e.nit} · ${e.modelo_nombre}`;
+  $('#lnkAlta').href = ruta('/', { modulo: 'inscripcion' });
+  $('#lnkBaja').href = ruta('/', { modulo: 'bajas' });
+  $('#periodo').innerHTML = D.periodos.map(p => `<option value="${p}" ${p === D.periodo ? 'selected' : ''}>${esc(nombreMes(p))}${p === D.periodo_actual ? ' (actual)' : ''}</option>`).join('');
+
+  // Indicadores de conciliación
+  const k = [
+    ['Titulares activos', numero(r.titulares), 'Colaboradores inscritos'],
+    ['Personas cubiertas', numero(r.personas), 'Titulares + cónyuge, hijos y adicionales'],
+    ['Asistencias activas', numero(r.asistencias), 'Una por cada asistencia contratada'],
+    ['Valor mensual', pesos(r.valor_total), e.modelo === 1 ? 'Se descuenta por nómina a los colaboradores' :
+      `Empresa ${pesos(r.valor_empresa)} · Colaboradores ${pesos(r.valor_colaborador)}`]
+  ];
+  if (e.modelo === 2) {
+    k.push([`Descuento modelo 2 (${r.descuento_pct} %)`, '−' + pesos(r.descuento_valor), 'Por pago o cofinanciación de la empresa']);
+    k.push(['Total a pagar', pesos(r.total_a_pagar), 'Valor mensual menos el descuento', 'hl']);
+  } else k[3].push('hl');
+  $('#kpis').innerHTML = k.map(([l, v, d, c]) => `<div class="kpi ${c || ''}"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="d">${esc(d)}</div></div>`).join('');
+
+  $('#tbProductos').innerHTML = r.por_producto.map(p => `<tr><td>${esc(p.asistencia)}</td><td>${esc(p.plan)}</td>
+    <td class="num">${numero(p.cantidad)}</td><td class="num">${pesos(p.valor)}</td></tr>`).join('');
+  $('#tfProductos').innerHTML = r.por_producto.length ? `<tr><td colspan="2">Total</td><td class="num">${numero(r.asistencias)}</td><td class="num">${pesos(r.valor_total)}</td></tr>` : '';
+  $('#vacioProductos').hidden = r.por_producto.length > 0;
+
+  const p = D.pendientes;
+  $('#cardPend').innerHTML = `<h3>Novedades de ${esc(nombreMes(D.periodo))} pendientes de validación</h3>
+    <p class="muted" style="margin:0 0 10px">No se suman a la conciliación hasta que el equipo de validación las apruebe.</p>
+    <div class="kpis" style="margin:0">
+      <div class="kpi"><div class="l">Altas pendientes</div><div class="v">${numero(p.altas)}</div><div class="d">+${pesos(p.altas_valor)} mensuales</div></div>
+      <div class="kpi"><div class="l">Bajas pendientes</div><div class="v">${numero(p.bajas)}</div><div class="d">−${pesos(p.bajas_valor)} mensuales</div></div>
+    </div>`;
+
+  // Registros inválidos del mes que aún no se han corregido
+  const inv = D.solicitudes.filter(s => s.estado === 'invalida' && !s.corregida);
+  $('#cntInv').textContent = inv.length; $('#cntInv').hidden = !inv.length;
+  $('#avisoInvalidos').innerHTML = inv.length ? `<div class="notice bad"><strong>Tiene ${inv.length} registro${inv.length > 1 ? 's' : ''} por corregir en ${esc(nombreMes(D.periodo))}.</strong>
+    Revise el motivo y envíe el formulario de nuevo. <button type="button" class="lnk" id="verInv">Ver registros</button></div>` : '';
+  if (inv.length) $('#verInv').onclick = () => { $('#fEstado').value = 'invalida'; abrirTab('solicitudes'); pintarSolicitudes(); };
+
+  pintarPersonas(); pintarSolicitudes();
+}
+
+function pintarPersonas() {
+  const q = $('#qPersonas').value.trim().toLowerCase();
+  const lista = D.consolidado.filter(c => !q || [c.titular_num_doc, c.titular_nombre].some(v => String(v || '').toLowerCase().includes(q)));
+  $('#tbPersonas').innerHTML = lista.map(c => `<tr>
+    <td>${esc(c.titular_nombre)}</td><td class="nw">${esc(c.tipo_doc || 'CC')} ${esc(c.titular_num_doc)}</td>
+    <td>${esc(c.asistencia)}</td><td>${esc(c.plan)}${c.mascota ? `<small class="muted">${esc(c.mascota)}</small>` : ''}</td>
+    <td class="num">${numero(c.personas)}</td><td class="num">${pesos(c.valor_mensual)}</td><td class="nw">${esc(c.fecha_alta || '')}</td>
+    <td><a class="lnk" href="${ruta('/', { modulo: 'bajas', doc: c.titular_num_doc })}">Dar de baja</a></td></tr>`).join('');
+  $('#vacioPersonas').hidden = lista.length > 0;
+  $('#cuentaPersonas').textContent = q ? `${lista.length} de ${D.consolidado.length} asistencias` : `${D.consolidado.length} asistencias activas`;
+}
+
+function pintarSolicitudes() {
+  const est = $('#fEstado').value, q = $('#qSol').value.trim().toLowerCase();
+  const lista = D.solicitudes.filter(s => (!est || s.estado === est) && (!q || [s.titular_num_doc, s.titular_nombre].some(v => String(v || '').toLowerCase().includes(q))));
+  $('#tbSol').innerHTML = lista.map(s => {
+    const corregir = s.estado === 'invalida' && !s.corregida
+      ? `<a class="lnk" href="${s.tipo === 'alta' ? ruta('/', { modulo: 'inscripcion' }) : ruta('/', { modulo: 'bajas', doc: s.titular_num_doc })}">Corregir</a>` : '';
+    return `<tr>
+      <td class="nw">${esc(fechaHora(s.recibido_en))}</td>
+      <td><span class="tag ${s.tipo}">${s.tipo === 'alta' ? 'Alta' : 'Baja'}</span></td>
+      <td>${esc(s.titular_nombre)}</td><td class="nw">${esc(s.titular_num_doc)}</td>
+      <td>${esc(s.asistencia)} · ${esc(s.plan)}${s.mascota ? `<small class="muted">${esc(s.mascota)}</small>` : ''}</td>
+      <td class="num">${s.valor_mensual ? pesos(s.valor_mensual) : ''}</td>
+      <td><span class="tag ${s.estado}">${ESTADOS[s.estado]}</span>${s.corregida ? ' <span class="tag corr">Reenviada</span>' : ''}
+        ${s.estado === 'invalida' && s.motivo ? `<span class="motivo">${esc(s.motivo)}</span>` : ''}</td>
+      <td>${corregir}</td></tr>`;
+  }).join('');
+  $('#vacioSol').hidden = lista.length > 0;
+  $('#vacioSol').textContent = D.solicitudes.length ? 'No hay solicitudes con ese filtro.' : `No hay solicitudes en ${nombreMes(D.periodo)}.`;
+}
+
+function abrirTab(t) {
+  $$('[data-tab]').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === t));
+  $$('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== t);
+}
+$$('[data-tab]').forEach(b => b.onclick = () => abrirTab(b.dataset.tab));
+$('#qPersonas').oninput = pintarPersonas;
+$('#qSol').oninput = pintarSolicitudes;
+$('#fEstado').onchange = pintarSolicitudes;
+$('#periodo').onchange = () => cargar($('#periodo').value).catch(x => toast(x.message));
+$('#csvPersonas').onclick = () => descargarCSV(
+  `Personas_activas_${D.empresa.nombre.replace(/[^\w]+/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`,
+  [['titular_nombre', 'Titular'], ['tipo_doc', 'Tipo doc'], ['titular_num_doc', 'Documento'], ['asistencia', 'Asistencia'], ['plan', 'Plan'],
+   ['mascota', 'Mascota'], ['personas', 'Personas cubiertas'], ['valor_mensual', 'Valor mensual'], ['fecha_alta', 'Desde']], D.consolidado);
+
+(async () => {
+  try {
+    SES = await api('/api/sesion');
+    const volver = SES.usuario.rol !== 'empresa' ? '<a class="link-w" href="/admin">← Administración</a>' : '';
+    pintarUsuario(SES, volver);
+    if (SES.usuario.rol !== 'empresa' && !empresaParam) { location.replace('/admin'); return; }
+    await cargar();
+    $('#cargando').hidden = true; $('#app').hidden = false;
+  } catch (x) {
+    $('#cargando').hidden = true; $('#errorCarga').textContent = x.message; $('#errorCarga').hidden = false;
+  }
+})();
+</script>
+</body>
+</html>
