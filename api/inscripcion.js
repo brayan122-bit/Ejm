@@ -1,15 +1,16 @@
-// Recibe cada inscripción que envía el formulario (index.html) y la guarda en Neon.
-import { sql, asegurarTabla, ipDe, crearLimitador, leerCuerpo } from './_db.js';
+// Recibe cada inscripción (alta) del formulario y la deja pendiente de validación en "solicitudes".
+import { sql, asegurarEsquema, ipDe, crearLimitador, leerCuerpo, origenValido, periodoActual, texto, entero, registrarError } from './_db.js';
+import { exigir, empresaObjetivo } from './_auth.js';
+import { producto, personasDe, PAGOS } from './_catalogo.js';
 
-const limitador = crearLimitador(30, 10 * 60 * 1000); // máx. 30 envíos por IP cada 10 minutos
-const MAX_FILAS = 60;
-const MAX_TEXTO = 500;
+const limitador = crearLimitador(40, 10 * 60 * 1000); // máx. 40 envíos por IP cada 10 minutos
+const MAX_FILAS = 60, MAX_TEXTO = 500;
 const CLAVE_VALIDA = /^[a-z0-9_]{1,60}$/i;
 
 function filaValida(f) {
   if (!f || typeof f !== 'object' || Array.isArray(f)) return false;
   const claves = Object.keys(f);
-  if (claves.length === 0 || claves.length > 200) return false;
+  if (claves.length === 0 || claves.length > 220) return false;
   return claves.every(k => {
     const v = f[k];
     if (!CLAVE_VALIDA.test(k)) return false;
@@ -18,48 +19,49 @@ function filaValida(f) {
   });
 }
 
-const txt = v => (v === undefined || v === null || v === '') ? null : String(v).slice(0, MAX_TEXTO);
-
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
-    return res.status(405).json({ error: 'Método no permitido' });
-  }
-
-  // Solo se aceptan envíos desde este mismo sitio.
-  const origen = req.headers.origin;
-  if (origen) {
-    try { if (new URL(origen).host !== req.headers.host) return res.status(403).json({ error: 'Origen no permitido' }); }
-    catch { return res.status(403).json({ error: 'Origen no permitido' }); }
-  }
-
-  const ip = ipDe(req);
-  if (limitador.excedido(ip)) return res.status(429).json({ error: 'Demasiados envíos. Intente más tarde.' });
-  limitador.registrar(ip);
-
-  const cuerpo = leerCuerpo(req);
-  const filas = cuerpo && cuerpo.filas;
-  const convenio = cuerpo && cuerpo.convenio && typeof cuerpo.convenio === 'object' ? cuerpo.convenio : null;
-  if (!Array.isArray(filas) || filas.length === 0 || filas.length > MAX_FILAS || !filas.every(filaValida)) {
-    return res.status(400).json({ error: 'Datos de inscripción inválidos' });
-  }
-  const convenioJson = convenio ? JSON.stringify(convenio) : null;
-  if (convenioJson && convenioJson.length > 20000) return res.status(400).json({ error: 'Datos de convenio inválidos' });
-
+  if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return res.status(405).json({ error: 'Método no permitido' }); }
+  if (!origenValido(req)) return res.status(403).json({ error: 'Origen no permitido' });
   try {
-    await asegurarTabla();
-    await sql.transaction(filas.map(f => {
-      const nombre = [f.titular_nombres, f.titular_apellidos].filter(Boolean).join(' ');
-      return sql`INSERT INTO inscripciones
-        (id_inscripcion, empresa, nit, asesor, titular_num_doc, titular_nombre, asistencia, plan, datos, convenio)
-        VALUES (${txt(f.id_inscripcion)}, ${txt(f.empresa)}, ${txt(f.nit)}, ${txt(f.asesor)},
-                ${txt(f.titular_num_doc)}, ${txt(nombre)}, ${txt(f.asistencia)}, ${txt(f.plan)},
-                ${JSON.stringify(f)}::jsonb, ${convenioJson}::jsonb)`;
+    const u = await exigir(req, res, ['empresa', 'admin', 'validador']); if (!u) return;
+    const ip = ipDe(req);
+    if (limitador.excedido(ip)) return res.status(429).json({ error: 'Demasiados envíos. Intente más tarde.' });
+    limitador.registrar(ip);
+
+    const cuerpo = leerCuerpo(req) || {};
+    const filas = cuerpo.filas;
+    if (!Array.isArray(filas) || filas.length === 0 || filas.length > MAX_FILAS || !filas.every(filaValida))
+      return res.status(400).json({ error: 'Datos de inscripción inválidos' });
+    if (!filas.every(f => producto(f.asistencia_id, f.plan_id)))
+      return res.status(400).json({ error: 'La inscripción tiene una asistencia o un plan que no existe.' });
+    if (!filas.every(f => PAGOS[f.pago_id])) return res.status(400).json({ error: 'Forma de pago inválida.' });
+    const idIns = texto(filas[0].id_inscripcion, 80);
+    if (!idIns || !filas.every(f => f.id_inscripcion === filas[0].id_inscripcion)) return res.status(400).json({ error: 'Identificador de inscripción inválido.' });
+
+    const emp = await empresaObjetivo(u, cuerpo.empresa_id);
+    if (!emp) return res.status(400).json({ error: 'Elija la empresa de la inscripción.' });
+
+    await asegurarEsquema();
+    const [ya] = await sql`SELECT 1 FROM solicitudes WHERE id_inscripcion = ${idIns} AND empresa_id = ${emp.id} LIMIT 1`;
+    if (ya) return res.status(200).json({ ok: true, repetida: true }); // reintento del mismo envío
+
+    const periodo = periodoActual();
+    const filasOk = filas.map(f => ({ ...f, empresa: emp.nombre, nit: emp.nit })); // la empresa sale de la sesión, no del formulario
+    const ids = await sql.transaction(filasOk.map(f => {
+      const p = producto(f.asistencia_id, f.plan_id);
+      const nombre = texto([f.titular_nombres, f.titular_apellidos].filter(Boolean).join(' '), 200);
+      return sql`INSERT INTO solicitudes
+        (periodo, tipo, empresa_id, enviado_por, id_inscripcion, titular_num_doc, titular_nombre, asistencia_id, asistencia,
+         plan_id, plan, mascota, pago, valor_mensual, valor_empresa, valor_colaborador, personas, datos)
+        VALUES (${periodo}, 'alta', ${emp.id}, ${u.id}, ${idIns}, ${texto(f.titular_num_doc, 20)}, ${nombre},
+          ${p.asistencia_id}, ${p.asistencia}, ${p.plan_id}, ${p.plan}, ${texto(f.mascota, 200) || null}, ${f.pago_id},
+          ${entero(f.valor_mensual)}, ${entero(f.valor_empresa)}, ${entero(f.valor_colaborador)}, ${personasDe(f)},
+          ${JSON.stringify(f)}::jsonb)
+        RETURNING id`;
     }));
-    return res.status(200).json({ ok: true, guardadas: filas.length });
+    return res.status(200).json({ ok: true, guardadas: filas.length, ids: ids.map(r => r[0].id), periodo });
   } catch (e) {
-    // Se registra solo el tipo de error, nunca los datos personales.
-    console.error('Error guardando inscripción:', e && e.message ? e.message.slice(0, 200) : 'desconocido');
-    return res.status(500).json({ error: 'No se pudo guardar la inscripción' });
+    registrarError('Error guardando inscripción', e);
+    return res.status(500).json({ error: 'No se pudo guardar la inscripción.' });
   }
 }
