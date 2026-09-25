@@ -34,6 +34,7 @@
         <label class="chkline"><input type="checkbox" id="sAlertas"> Solo con alertas</label>
         <div class="grow"><label for="sQ">Buscar</label><input type="search" id="sQ" placeholder="Cédula, nombre o empresa"></div>
         <button type="button" class="btn sec" id="sRecargar">Actualizar</button>
+        <button type="button" class="btn sec" id="sMasivaBtn" data-admin>Carga masiva por Excel…</button>
       </div>
       <div class="kpis" id="sKpis"></div>
       <div class="tabla"><table>
@@ -111,8 +112,14 @@
   <div class="dlg-b"><div class="grid2">
     <div class="full"><label for="eNombre">Nombre de la empresa</label><input type="text" id="eNombre" maxlength="150"></div>
     <div><label for="eNit">NIT</label><input type="text" id="eNit" maxlength="15" inputmode="numeric" placeholder="900123456"></div>
-    <div><label for="eModelo">Modelo</label><select id="eModelo"><option value="1">Modelo 1 · El colaborador paga por nómina</option><option value="2">Modelo 2 · La empresa paga o cofinancia (descuento)</option></select></div>
+    <div><label for="eModelo">Modelo</label><select id="eModelo"><option value="1">Modelo 1 · El colaborador paga por nómina</option><option value="2">Modelo 2 · La empresa paga o cofinancia (descuento)</option><option value="3">Mixto · Modelo 1 o Modelo 2 por inscripción</option></select></div>
     <div class="full"><label class="chkline" style="height:auto"><input type="checkbox" id="eActiva"> Empresa activa (sus usuarios pueden ingresar)</label></div>
+    <div class="full">
+      <label class="lab" for="eDominios">Dominios corporativos de correo <small class="muted">(uno por línea, ej: acme.com.co)</small></label>
+      <textarea id="eDominios" style="height:72px" placeholder="acme.com.co
+acme.com"></textarea>
+      <p class="muted" style="font-size:12px;margin:3px 0 0">Los correos de estos dominios podrán solicitar acceso automáticamente. No se admiten dominios públicos (gmail, hotmail, etc.).</p>
+    </div>
     <div class="full"><span class="lab">Productos habilitados <button type="button" class="lnk" id="eTodos">Marcar todos</button> · <button type="button" class="lnk" id="eNinguno">Quitar todos</button></span>
       <div class="prods" id="eProds"></div></div>
     <div class="full notice bad" id="eErr" hidden></div>
@@ -124,9 +131,15 @@
   <div class="dlg-b"><div class="grid2">
     <div><label for="uNombre">Nombre</label><input type="text" id="uNombre" maxlength="150"></div>
     <div><label for="uEmail">Correo</label><input type="email" id="uEmail" maxlength="200"></div>
-    <div><label for="uRol">Rol</label><select id="uRol"><option value="empresa">Empresa</option><option value="validador">Validador</option><option value="admin">Administrador</option></select></div>
+    <div><label for="uRol">Rol</label><select id="uRol">
+      <option value="empresa_usuario">Empresa usuario (alta, baja y mis envíos)</option>
+      <option value="empresa_admin">Empresa admin (panel completo + gestiona usuarios)</option>
+      <option value="validador">Validador (revisa solicitudes y consolidado)</option>
+      <option value="maestro">Maestro (todo el sistema)</option>
+    </select></div>
     <div id="uEmpWrap"><label for="uEmpresa">Empresa</label><select id="uEmpresa" class="selEmpresasObl"></select></div>
     <div class="full"><label class="chkline" style="height:auto"><input type="checkbox" id="uActivo"> Usuario activo</label></div>
+    <div class="full"><label class="chkline" style="height:auto"><input type="checkbox" id="uExcepcionDominio"> Excepción de dominio (permite correos fuera de la lista de dominios de la empresa)</label></div>
     <div class="full notice bad" id="uErr" hidden></div>
   </div></div>
   <div class="dlg-f"><button class="btn sec" onclick="this.closest('dialog').close()">Cancelar</button><button class="btn" id="uOk">Guardar</button></div></dialog>
@@ -143,7 +156,7 @@
     <p style="margin-top:0">Para cargar las personas que <strong>ya tienen</strong> la asistencia antes de usar el formulario. Un archivo por empresa. Las filas que ya existan activas se omiten.</p>
     <div class="grid2">
       <div class="full"><label for="impEmpresa">Empresa</label><select id="impEmpresa" class="selEmpresasObl"></select></div>
-      <div class="full"><label for="impArchivo">Archivo CSV (separado por ; o ,)</label><input type="file" id="impArchivo" accept=".csv,text/csv"></div>
+      <div class="full"><label for="impArchivo">Archivo CSV o Excel (.xlsx)</label><input type="file" id="impArchivo" accept=".csv,text/csv,.xlsx"></div>
     </div>
     <p style="font-size:13px">Columnas: <code>titular_num_doc</code>, <code>titular_nombre</code>, <code>asistencia</code>, <code>plan</code>, <code>valor_mensual</code>, y opcionales <code>titular_tipo_doc</code>, <code>personas</code>, <code>pago</code> (Nomina, Empresa o Cofinanciado), <code>mascota</code>.
       <button type="button" class="lnk" id="impPlantilla">Descargar plantilla</button></p>
@@ -151,12 +164,28 @@
   </div>
   <div class="dlg-f"><button class="btn sec" onclick="this.closest('dialog').close()">Cancelar</button><button class="btn" id="impOk" disabled>Cargar</button></div></dialog>
 
+<!-- Cargas masivas por Excel -->
+<dialog id="dMasiva"><div class="dlg-h"><h3>Carga masiva por Excel</h3><button class="x" onclick="this.closest('dialog').close()" aria-label="Cerrar">×</button></div>
+  <div class="dlg-b">
+    <div class="grid2">
+      <div class="full"><label for="mEmpresa">Empresa</label><select id="mEmpresa" class="selEmpresasObl"></select></div>
+      <div class="full"><label for="mArchivo">Archivo Excel (.xlsx)</label><input type="file" id="mArchivo" accept=".xlsx"></div>
+      <div class="full"><label for="mSoporte">Soporte general (opcional, PDF o JPG)</label><input type="file" id="mSoporte" accept=".pdf,image/jpeg,image/png"></div>
+    </div>
+    <p style="font-size:13px"><button type="button" class="lnk" id="mPlantilla">Descargar plantilla Excel</button></p>
+    <div id="mInfo"></div>
+  </div>
+  <div class="dlg-f"><button class="btn sec" onclick="this.closest('dialog').close()">Cancelar</button><button class="btn" id="mOk" disabled>Cargar filas válidas</button></div></dialog>
+
 <script src="/app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 let SES = null, EMPRESAS = [], PRODUCTOS = [], SOL = null, CONS = [], USUARIOS = [];
 const sel = new Set();
-const esAdmin = () => SES.usuario.rol === 'admin';
+const esMaestro  = () => SES.usuario.rol === 'maestro';
+const esInterno  = () => ['maestro', 'validador'].includes(SES.usuario.rol);
 const PAGO_TXT = { Nomina: 'Nómina', Empresa: 'Empresa', Cofinanciado: 'Cofinanciado' };
+const ROLES_LABEL = { maestro: 'Maestro', validador: 'Validador', empresa_admin: 'Empresa admin', empresa_usuario: 'Empresa usuario' };
 
 function abrirTab(t) {
   $$('[data-tab]').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === t));
@@ -204,7 +233,7 @@ function pintarSolicitudes() {
     <td><span class="tag ${s.tipo}">${s.tipo === 'alta' ? 'Alta' : 'Baja'}</span></td>
     <td>${esc(s.titular_nombre)}<small class="muted">${esc(s.titular_num_doc)}</small></td>
     <td>${esc(s.asistencia)} · ${esc(s.plan)}${s.mascota ? `<small class="muted">${esc(s.mascota)}</small>` : ''}</td>
-    <td class="num">${s.valor_mensual ? pesos(s.valor_mensual) : ''}</td>
+    <td class="num">${s.valor_mensual ? pesos(s.valor_mensual) : ''}<small class="muted" style="display:block">Mod. ${s.modelo_aplicado || 1}</small></td>
     <td>${s.alertas.length ? s.alertas.map(a => `<span class="al">${esc(a.texto)}</span>`).join('') : '<span class="muted" style="font-size:12.5px">Sin alertas</span>'}</td>
     <td><span class="tag ${s.estado}">${ESTADOS[s.estado]}</span>${s.estado === 'invalida' && s.motivo ? `<span class="motivo">${esc(s.motivo)}</span>` : ''}
       ${s.validado_por_nombre ? `<small class="muted">${esc(s.validado_por_nombre)}</small>` : ''}</td></tr>`).join('');
@@ -240,6 +269,10 @@ function verDetalle(id) {
   $('#dDetB').innerHTML = `
     ${s.alertas.length ? `<div class="notice warn"><strong>Validaciones automáticas</strong><ul>${s.alertas.map(a => `<li>${esc(a.texto)}</li>`).join('')}</ul></div>` : '<div class="notice ok">Sin alertas automáticas.</div>'}
     ${s.estado === 'invalida' ? `<div class="notice bad"><strong>Inválida:</strong> ${esc(s.motivo)}</div>` : ''}
+    <div style="margin-bottom:12px;display:flex;gap:8px;">
+      ${s.archivo_pdf_id ? `<a href="/api/archivo?id=${s.archivo_pdf_id}" target="_blank" class="btn sec sm" style="text-decoration:none">📄 Descargar PDF</a>` : ''}
+      ${s.archivo_soporte_id ? `<a href="/api/archivo?id=${s.archivo_soporte_id}" target="_blank" class="btn sec sm" style="text-decoration:none">📎 Ver soporte</a>` : ''}
+    </div>
     <dl class="det">
       <dt>Empresa</dt><dd>${esc(s.empresa_nombre)} · NIT ${esc(s.empresa_nit)}</dd>
       <dt>Asistencia</dt><dd>${esc(s.asistencia)} · ${esc(s.plan)}</dd>
@@ -279,7 +312,8 @@ $('#sCsv').onclick = () => {
   const claves = new Set(); lista.forEach(s => Object.keys(s.datos || {}).forEach(k => claves.add(k)));
   const cols = [['id', 'solicitud'], [s => fechaHora(s.recibido_en), 'recibida'], ['tipo', 'tipo'], [s => ESTADOS[s.estado], 'estado'], ['motivo', 'motivo_invalidez'],
     [s => s.alertas.map(a => a.texto).join(' | '), 'alertas'], ['empresa_nombre', 'empresa'], ['empresa_nit', 'nit_empresa'],
-    ['titular_num_doc', 'documento'], ['titular_nombre', 'titular'], ['asistencia', 'asistencia'], ['plan', 'plan'], ['valor_mensual', 'valor'],
+    ['titular_num_doc', 'documento'], ['titular_nombre', 'titular'], ['asistencia', 'asistencia'], ['plan', 'plan'], ['valor_mensual', 'valor'], ['modelo_aplicado', 'modelo_aplicado'],
+    [s => s.archivo_pdf_id ? 'Sí' : 'No', 'tiene_pdf'], [s => s.archivo_soporte_id ? 'Sí' : 'No', 'tiene_soporte'],
     ...[...claves].filter(k => !['empresa', 'nit'].includes(k)).map(k => [s => (s.datos || {})[k], k])];
   descargarCSV(`Novedades_${SOL.periodo}_${new Date().toISOString().slice(0, 10)}.csv`, cols, lista);
 };
@@ -309,7 +343,7 @@ function pintarConsolidado() {
   const max = 1500;
   $('#cTb').innerHTML = lista.slice(0, max).map(c => `<tr><td>${esc(c.empresa_nombre)}</td><td>${esc(c.titular_nombre)}</td>
     <td class="nw">${esc(c.titular_num_doc)}</td><td>${esc(c.asistencia)}</td><td>${esc(c.plan)}${c.mascota ? `<small class="muted">${esc(c.mascota)}</small>` : ''}</td>
-    <td>${esc(PAGO_TXT[c.pago] || '')}</td><td class="num">${numero(c.personas)}</td><td class="num">${pesos(c.valor_mensual)}</td>
+    <td>${esc(PAGO_TXT[c.pago] || '')}<small class="muted" style="display:block">Mod. ${c.modelo_aplicado || 1}</small></td><td class="num">${numero(c.personas)}</td><td class="num">${pesos(c.valor_mensual)}</td>
     <td class="nw">${esc(c.fecha_alta_txt || '')}</td><td>${c.origen === 'importado' ? 'Carga inicial' : 'Formulario'}</td></tr>`).join('');
   $('#cVacio').hidden = lista.length > 0;
   $('#cCuenta').textContent = `${lista.length} asistencias activas${lista.length > max ? ` (se muestran ${max}; use la búsqueda o descargue el CSV)` : ''}`;
@@ -322,7 +356,7 @@ $('#cCsv').onclick = () => {
   const cols = [['empresa_nombre', 'empresa'], ['empresa_nit', 'nit'], ['titular_num_doc', 'titular_num_doc'], ['titular_nombre', 'titular_nombre'],
     ['asistencia', 'asistencia'], ['plan', 'plan'], ['mascota', 'mascota'], [c => PAGO_TXT[c.pago] || '', 'pago'], ['valor_mensual', 'valor_mensual'],
     ['valor_empresa', 'valor_empresa'], ['valor_colaborador', 'valor_colaborador'], ['personas', 'personas_cubiertas'], ['fecha_alta_txt', 'fecha_alta'],
-    ['origen', 'origen'], ...[...claves].filter(k => !['empresa', 'nit', 'titular_num_doc', 'asistencia', 'plan', 'mascota', 'valor_mensual', 'valor_empresa', 'valor_colaborador'].includes(k))
+    ['origen', 'origen'], ['modelo_aplicado', 'modelo_aplicado'], ...[...claves].filter(k => !['empresa', 'nit', 'titular_num_doc', 'asistencia', 'plan', 'mascota', 'valor_mensual', 'valor_empresa', 'valor_colaborador'].includes(k))
       .map(k => [c => (c.datos || {})[k], k])];
   const emp = $('#cEmpresa').value ? EMPRESAS.find(e => String(e.id) === $('#cEmpresa').value).nombre.replace(/[^\w]+/g, '_') : 'Todas';
   descargarCSV(`Consolidado_CRM_${emp}_${new Date().toISOString().slice(0, 10)}.csv`, cols, CONS);
@@ -331,13 +365,31 @@ $('#cCsv').onclick = () => {
 // Importación del consolidado inicial
 let IMP = [];
 $('#cImportar').onclick = () => { $('#impEmpresa').value = $('#cEmpresa').value; $('#impArchivo').value = ''; $('#impInfo').innerHTML = ''; IMP = []; $('#impOk').disabled = true; $('#dImp').showModal(); };
-$('#impPlantilla').onclick = () => descargarCSV('Plantilla_consolidado.csv',
-  [['a', 'titular_num_doc'], ['b', 'titular_nombre'], ['c', 'titular_tipo_doc'], ['d', 'asistencia'], ['e', 'plan'], ['f', 'valor_mensual'], ['g', 'personas'], ['h', 'pago'], ['i', 'mascota']],
-  [{ a: '1020304050', b: 'Nombre Apellido', c: 'CC', d: 'Doctor 360', e: 'Light', f: '25000', g: '3', h: 'Nomina', i: '' },
-   { a: '1020304050', b: 'Nombre Apellido', c: 'CC', d: 'Protección Hogar', e: 'Hogar Mascotas', f: '12000', g: '1', h: 'Nomina', i: 'Luna (perro)' }]);
+$('#impPlantilla').onclick = () => {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet([
+    { titular_num_doc: '1020304050', titular_nombre: 'Nombre Apellido', titular_tipo_doc: 'CC', asistencia: 'Doctor 360', plan: 'Light', valor_mensual: '25000', personas: '3', pago: 'Nomina', mascota: '', modelo: '1' },
+    { titular_num_doc: '1020304050', titular_nombre: 'Nombre Apellido', titular_tipo_doc: 'CC', asistencia: 'Protección Hogar', plan: 'Hogar Mascotas', valor_mensual: '12000', personas: '1', pago: 'Nomina', mascota: 'Luna (perro)', modelo: '1' }
+  ]);
+  XLSX.utils.book_append_sheet(wb, ws, "Datos");
+  const wsInst = XLSX.utils.aoa_to_sheet([
+    ["Instrucciones para el consolidado"],
+    ["1. Llene los datos requeridos. NO cambie los nombres de las columnas."],
+    ["2. Datos opcionales: titular_tipo_doc, personas, pago (Nomina, Empresa, Cofinanciado), mascota, modelo."]
+  ]);
+  XLSX.utils.book_append_sheet(wb, wsInst, "Instrucciones");
+  XLSX.writeFile(wb, "Plantilla_consolidado.xlsx");
+};
 $('#impArchivo').onchange = async e => {
   const f = e.target.files[0]; IMP = []; $('#impOk').disabled = true; if (!f) return;
-  const txt = await f.text(); const filas = leerCSV(txt);
+  let filas = [];
+  if (f.name.endsWith('.csv')) {
+    const txt = await f.text(); filas = leerCSV(txt);
+  } else {
+    const data = await f.arrayBuffer();
+    const wb = XLSX.read(data);
+    filas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+  }
   const alias = { documento: 'titular_num_doc', cedula: 'titular_num_doc', num_doc: 'titular_num_doc', nombre: 'titular_nombre', titular: 'titular_nombre',
     tipo_doc: 'titular_tipo_doc', valor: 'valor_mensual', personas_cubiertas: 'personas' };
   IMP = filas.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [alias[k] || k, v])));
@@ -360,12 +412,78 @@ $('#impOk').onclick = async () => {
   }
 };
 
+/* ==================== ALTAS MASIVAS ==================== */
+let mFilas = [];
+let mLoteId = '';
+$('#sMasivaBtn').onclick = () => { $('#mEmpresa').value = $('#sEmpresa').value || ''; $('#mArchivo').value = ''; $('#mSoporte').value = ''; $('#mInfo').innerHTML = ''; mFilas = []; $('#mOk').disabled = true; $('#dMasiva').showModal(); };
+$('#mPlantilla').onclick = () => {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet([{ tipo_doc: 'CC', num_doc: '12345678', nombres: 'Juan', apellidos: 'Pérez', fecha_nac: '01/01/1990', genero: 'M', celular: '3000000000', correo: 'juan@ejemplo.com', ciudad: 'Bogotá', direccion: 'Calle 1', asistencia: 'Doctor 360', plan: 'Light', modelo: '1', forma_pago: 'Nomina', valor_mensual: 25000 }]);
+  XLSX.utils.book_append_sheet(wb, ws, "Datos");
+  const wsInst = XLSX.utils.aoa_to_sheet([["Instrucciones para altas masivas"], ["No modifique las columnas."], ["Las fechas deben ser dd/mm/aaaa."]]);
+  XLSX.utils.book_append_sheet(wb, wsInst, "Instrucciones");
+  XLSX.writeFile(wb, "Plantilla_CargaMasiva.xlsx");
+};
+$('#mArchivo').onchange = async e => {
+  const f = e.target.files[0]; mFilas = []; $('#mOk').disabled = true; if (!f) return;
+  const data = await f.arrayBuffer();
+  const wb = XLSX.read(data);
+  mFilas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+  if (!mFilas.length) return $('#mInfo').innerHTML = '<div class="notice bad">Archivo vacío</div>';
+  mLoteId = 'MAS-' + Date.now().toString(36);
+  let html = `<div class="notice info">${mFilas.length} fila(s) leídas.</div>`;
+  let bloq = 0;
+  mFilas.forEach((r, i) => {
+    let errs = [];
+    if (!r.num_doc) errs.push('Falta documento');
+    if (!r.nombres || !r.apellidos) errs.push('Falta nombre/apellido');
+    if (!r.asistencia || !r.plan) errs.push('Falta asistencia/plan');
+    if (errs.length) { bloq++; html += `<div style="color:red;font-size:12px">Fila ${i+2}: ${errs.join(', ')}</div>`; }
+  });
+  if (bloq > 0) html += `<div>${bloq} fila(s) tienen errores bloqueantes. Se ignorarán.</div>`;
+  $('#mInfo').innerHTML = html;
+  $('#mOk').disabled = mFilas.length === 0;
+};
+$('#mOk').onclick = async () => {
+  if (!$('#mEmpresa').value) return toast('Elija la empresa.');
+  $('#mOk').disabled = true;
+  let soporte_id = null;
+  const fSoporte = $('#mSoporte').files[0];
+  if (fSoporte) {
+    try {
+      const { put } = await import('https://esm.sh/@vercel/blob@0.23.4?bundle');
+      const rT = await api('/api/archivo', { method:'POST', body: { accion:'token_subida', tipo:'soporte_nomina', id_inscripcion: mLoteId } });
+      const bRes = await put(rT.clientToken.pathname, fSoporte, { multipart: true, token: rT.clientToken.token });
+      const rReg = await api('/api/archivo', { method:'POST', body: { accion:'registrar', id_inscripcion: mLoteId, tipo:'soporte_nomina', url: bRes.url } });
+      soporte_id = rReg.id;
+    } catch(ex) { toast('Falló la subida del soporte: ' + ex.message); $('#mOk').disabled = false; return; }
+  }
+  
+  const lotes = [];
+  for (let i = 0; i < mFilas.length; i += 200) lotes.push(mFilas.slice(i, i + 200));
+  let cargadas = 0, omitidas = 0, errores = 0;
+  try {
+    for (const lote of lotes) {
+      const r = await api('/api/admin', { method: 'POST', body: { accion: 'altas_masivas', empresa_id: $('#mEmpresa').value, id_lote: mLoteId, filas: lote, archivo_soporte_id: soporte_id } });
+      cargadas += r.cargadas || 0;
+      omitidas += r.omitidas || 0;
+      errores += (r.errores || []).length;
+    }
+    toast(`${cargadas} cargadas, ${omitidas} repetidas omitidas, ${errores} con error.`);
+    $('#dMasiva').close();
+    cargarSolicitudes();
+  } catch(x) {
+    $('#mInfo').innerHTML = `<div class="notice bad"><strong>${esc(x.message)}</strong>${x.datos && x.datos.errores ? `<ul>${x.datos.errores.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}</div>`;
+    $('#mOk').disabled = false;
+  }
+};
+
 /* ==================== EMPRESAS ==================== */
 async function cargarEmpresas() {
   const d = await api('/api/admin', { method: 'POST', body: { accion: 'empresas' } });
   EMPRESAS = d.filas; PRODUCTOS = d.productos; pintarSelectEmpresas();
   $('#eTb').innerHTML = EMPRESAS.map(e => `<tr><td><strong>${esc(e.nombre)}</strong></td><td class="nw">${esc(e.nit)}</td>
-    <td>Modelo ${e.modelo}<small class="muted">${e.modelo === 1 ? 'Nómina' : 'Empresa / cofinanciado'}</small></td>
+    <td>${e.modelo === 3 ? 'Mixto' : 'Modelo ' + e.modelo}<small class="muted">${e.modelo === 1 ? 'Nómina' : e.modelo === 2 ? 'Empresa / cofinanciado' : 'Nómina / Empresa'}</small></td>
     <td>${!e.productos.length ? 'Todos' : `${e.productos.length} de ${PRODUCTOS.length}`}</td>
     <td class="num">${numero(e.activos)}</td><td class="num">${numero(e.usuarios)}</td>
     <td>${e.activa ? '<span class="tag valida">Activa</span>' : '<span class="tag invalida">Inactiva</span>'}</td>
@@ -376,7 +494,11 @@ let empEdit = null;
 function abrirEmpresa(e) {
   empEdit = e || null;
   $('#dEmpT').textContent = e ? 'Editar empresa' : 'Nueva empresa';
-  $('#eNombre').value = e ? e.nombre : ''; $('#eNit').value = e ? e.nit : ''; $('#eModelo').value = e ? e.modelo : 1; $('#eActiva').checked = e ? e.activa : true;
+  $('#eNombre').value = e ? e.nombre : ''; $('#eNit').value = e ? e.nit : '';
+  $('#eModelo').value = e ? e.modelo : 1; $('#eActiva').checked = e ? e.activa : true;
+  // Cargar dominios en el textarea
+  const doms = (e && Array.isArray(e.dominios)) ? e.dominios : [];
+  $('#eDominios').value = doms.join('\n');
   const on = e && e.productos.length ? new Set(e.productos) : new Set(PRODUCTOS.map(p => p.clave));
   let grupo = '';
   $('#eProds').innerHTML = PRODUCTOS.map(p => { const h = p.asistencia !== grupo ? `<h4>${esc(p.asistencia)}</h4>` : ''; grupo = p.asistencia;
@@ -391,14 +513,28 @@ $('#eOk').onclick = async () => {
   const productos = $$('#eProds input:checked').map(i => i.value);
   if (!productos.length) { $('#eErr').textContent = 'Habilite al menos un producto.'; $('#eErr').hidden = false; return; }
   try {
-    await api('/api/admin', { method: 'POST', body: { accion: 'empresa_guardar', id: empEdit && empEdit.id, nombre: $('#eNombre').value, nit: $('#eNit').value,
-      modelo: +$('#eModelo').value, activa: $('#eActiva').checked, productos: productos.length === PRODUCTOS.length ? [] : productos } });
+    await api('/api/admin', { method: 'POST', body: { accion: 'empresa_guardar', id: empEdit && empEdit.id,
+      nombre: $('#eNombre').value, nit: $('#eNit').value,
+      modelo: +$('#eModelo').value, activa: $('#eActiva').checked,
+      productos: productos.length === PRODUCTOS.length ? [] : productos } });
+    // Guardar dominios si se especificaron
+    const domTexto = $('#eDominios').value.trim();
+    const domList = domTexto ? domTexto.split('\n').map(d => d.trim()).filter(Boolean) : [];
+    if (empEdit || domList.length) {
+      // Obtener el ID de la empresa recién creada o editada
+      const emps = (await api('/api/admin', { method: 'POST', body: { accion: 'empresas' } })).filas;
+      const empGuardada = emps.find(e => e.nit === $('#eNit').value.replace(/[^0-9-]/g, ''));
+      if (empGuardada && domList.length) {
+        try { await api('/api/admin', { method: 'POST', body: { accion: 'dominios_guardar', empresa_id: empGuardada.id, dominios: domList } }); }
+        catch (dx) { toast('Empresa guardada, pero error en dominios: ' + dx.message); }
+      }
+    }
     $('#dEmp').close(); toast('Empresa guardada.'); cargarEmpresas();
   } catch (x) { $('#eErr').textContent = x.message; $('#eErr').hidden = false; }
 };
 
 /* ==================== USUARIOS ==================== */
-const ROLES = { admin: 'Administrador', validador: 'Validador', empresa: 'Empresa' };
+const ROLES = { maestro: 'Maestro', validador: 'Validador', empresa_admin: 'Empresa admin', empresa_usuario: 'Empresa usuario' };
 async function cargarUsuarios() {
   if (!EMPRESAS.length) await cargarEmpresas();
   USUARIOS = (await api('/api/admin', { method: 'POST', body: { accion: 'usuarios' } })).filas;
@@ -411,13 +547,16 @@ let usuEdit = null;
 function abrirUsuario(u) {
   usuEdit = u || null;
   $('#dUsuT').textContent = u ? 'Editar usuario' : 'Nuevo usuario';
-  $('#uNombre').value = u ? u.nombre : ''; $('#uEmail').value = u ? u.email : ''; $('#uRol').value = u ? u.rol : 'empresa';
+  $('#uNombre').value = u ? u.nombre : ''; $('#uEmail').value = u ? u.email : '';
+  $('#uRol').value = u ? u.rol : 'empresa_usuario';
   $('#uEmpresa').value = u && u.empresa_id ? u.empresa_id : ''; $('#uActivo').checked = u ? u.activo : true;
-  $('#uEmpWrap').hidden = $('#uRol').value !== 'empresa'; $('#uErr').hidden = true; $('#dUsu').showModal();
+  $('#uExcepcionDominio').checked = false;
+  const esDeEmpresa = ['empresa_admin', 'empresa_usuario'].includes($('#uRol').value);
+  $('#uEmpWrap').hidden = !esDeEmpresa; $('#uErr').hidden = true; $('#dUsu').showModal();
 }
 function mostrarClave(txt, clave) { $('#ctTxt').textContent = txt; $('#ctClave').textContent = clave; $('#dClaveT').showModal(); }
 $('#ctCopiar').onclick = () => navigator.clipboard.writeText($('#ctClave').textContent).then(() => toast('Copiada.'));
-$('#uRol').onchange = () => $('#uEmpWrap').hidden = $('#uRol').value !== 'empresa';
+$('#uRol').onchange = () => { const esEmp = ['empresa_admin', 'empresa_usuario'].includes($('#uRol').value); $('#uEmpWrap').hidden = !esEmp; };
 $('#uNuevo').onclick = () => abrirUsuario();
 $('#uTb').onclick = async e => {
   const ed = e.target.closest('[data-uedit]'); if (ed) return abrirUsuario(USUARIOS.find(u => u.id === +ed.dataset.uedit));
@@ -429,8 +568,10 @@ $('#uTb').onclick = async e => {
 };
 $('#uOk').onclick = async () => {
   try {
-    const r = await api('/api/admin', { method: 'POST', body: { accion: 'usuario_guardar', id: usuEdit && usuEdit.id, nombre: $('#uNombre').value, email: $('#uEmail').value,
-      rol: $('#uRol').value, empresa_id: $('#uEmpresa').value || undefined, activo: $('#uActivo').checked } });
+    const r = await api('/api/admin', { method: 'POST', body: { accion: 'usuario_guardar', id: usuEdit && usuEdit.id,
+      nombre: $('#uNombre').value, email: $('#uEmail').value,
+      rol: $('#uRol').value, empresa_id: $('#uEmpresa').value || undefined,
+      activo: $('#uActivo').checked, excepcion_dominio: $('#uExcepcionDominio').checked } });
     $('#dUsu').close(); cargarUsuarios();
     if (r.clave_temporal) mostrarClave(`Usuario creado: ${$('#uEmail').value}. Contraseña temporal:`, r.clave_temporal); else toast('Usuario guardado.');
   } catch (x) { $('#uErr').textContent = x.message; $('#uErr').hidden = false; }
@@ -440,15 +581,15 @@ $('#uOk').onclick = async () => {
 (async () => {
   try {
     SES = await api('/api/sesion');
-    if (SES.usuario.rol === 'empresa') { location.replace('/portal'); return; }
+    if (['empresa_admin', 'empresa_usuario'].includes(SES.usuario.rol)) { location.replace('/portal'); return; }
     pintarUsuario(SES, `<a class="link-w" href="/">Diligenciar formulario</a>`);
-    EMPRESAS = SES.empresas.map(e => ({ ...e, activa: true }));
-    if (!esAdmin()) $$('[data-admin]').forEach(b => b.hidden = true);
+    EMPRESAS = SES.empresas ? SES.empresas.map(e => ({ ...e, activa: true })) : [];
+    if (!esMaestro()) $$('[data-admin]').forEach(b => b.hidden = true);
     else await cargarEmpresas();
     pintarSelectEmpresas();
     await cargarSolicitudes();
     $('#cargando').hidden = true; $('#app').hidden = false;
-    if (esAdmin() && !EMPRESAS.length) { abrirTab('empresas'); toast('Empiece creando la primera empresa.'); }
+    if (esMaestro() && !EMPRESAS.length) { abrirTab('empresas'); toast('Empiece creando la primera empresa.'); }
   } catch (x) { $('#cargando').hidden = true; $('#errorCarga').textContent = x.message; $('#errorCarga').hidden = false; }
 })();
 </script>

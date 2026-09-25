@@ -71,16 +71,30 @@
             <option value="pendiente">Pendientes de validación</option><option value="valida">Válidas</option>
           </select></div>
         <div class="grow"><label for="qSol">Buscar</label><input type="search" id="qSol" placeholder="Cédula o nombre"></div>
+        <button type="button" class="btn sec" id="sMasivaBtn" hidden>Carga masiva por Excel…</button>
       </div>
       <div class="tabla"><table>
         <thead><tr><th>Enviada</th><th>Tipo</th><th>Titular</th><th>Documento</th><th>Asistencia · plan</th><th class="num">Valor</th><th>Estado</th><th></th></tr></thead>
         <tbody id="tbSol"></tbody>
       </table><div class="vacio" id="vacioSol" hidden>No hay solicitudes en este mes.</div></div>
     </section>
+    </section>
   </div>
 </main>
 
+<dialog id="dMasiva"><div class="dlg-h"><h3>Carga masiva por Excel</h3><button class="x" onclick="this.closest('dialog').close()" aria-label="Cerrar">×</button></div>
+  <div class="dlg-b">
+    <div class="grid2">
+      <div class="full"><label for="mArchivo">Archivo Excel (.xlsx)</label><input type="file" id="mArchivo" accept=".xlsx"></div>
+      <div class="full"><label for="mSoporte">Soporte general (opcional, PDF o JPG)</label><input type="file" id="mSoporte" accept=".pdf,image/jpeg,image/png"></div>
+    </div>
+    <p style="font-size:13px"><button type="button" class="lnk" id="mPlantilla">Descargar plantilla Excel</button></p>
+    <div id="mInfo"></div>
+  </div>
+  <div class="dlg-f"><button class="btn sec" onclick="this.closest('dialog').close()">Cancelar</button><button class="btn" id="mOk" disabled>Cargar filas válidas</button></div></dialog>
+
 <script src="/app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 let SES = null, D = null;
 const params = new URLSearchParams(location.search);
@@ -113,7 +127,14 @@ function pintar() {
     ['Valor mensual', pesos(r.valor_total), e.modelo === 1 ? 'Se descuenta por nómina a los colaboradores' :
       `Empresa ${pesos(r.valor_empresa)} · Colaboradores ${pesos(r.valor_colaborador)}`]
   ];
-  if (e.modelo === 2) {
+  if (r.es_mixto) {
+    k.push(['Subtotal modelo 1', pesos(r.subtotal_m1), 'El colaborador paga por nómina']);
+    k.push(['Subtotal modelo 2', pesos(r.subtotal_m2), 'La empresa paga o cofinancia']);
+    if (r.descuento_valor > 0) {
+      k.push([`Descuento (${r.descuento_pct} % s/ modelo 2)`, '−' + pesos(r.descuento_valor), 'Aplica solo al subtotal modelo 2']);
+      k.push(['Total a pagar', pesos(r.total_a_pagar), 'Valor mensual menos el descuento', 'hl']);
+    } else k[3].push('hl');
+  } else if (e.modelo === 2) {
     k.push([`Descuento modelo 2 (${r.descuento_pct} %)`, '−' + pesos(r.descuento_valor), 'Por pago o cofinanciación de la empresa']);
     k.push(['Total a pagar', pesos(r.total_a_pagar), 'Valor mensual menos el descuento', 'hl']);
   } else k[3].push('hl');
@@ -167,7 +188,12 @@ function pintarSolicitudes() {
       <td>${esc(s.asistencia)} · ${esc(s.plan)}${s.mascota ? `<small class="muted">${esc(s.mascota)}</small>` : ''}</td>
       <td class="num">${s.valor_mensual ? pesos(s.valor_mensual) : ''}</td>
       <td><span class="tag ${s.estado}">${ESTADOS[s.estado]}</span>${s.corregida ? ' <span class="tag corr">Reenviada</span>' : ''}
-        ${s.estado === 'invalida' && s.motivo ? `<span class="motivo">${esc(s.motivo)}</span>` : ''}</td>
+        ${s.estado === 'invalida' && s.motivo ? `<span class="motivo">${esc(s.motivo)}</span>` : ''}
+        <div style="margin-top:4px;display:flex;gap:4px;">
+          ${s.archivo_pdf_id ? `<a href="/api/archivo?id=${s.archivo_pdf_id}" target="_blank" class="lnk" style="font-size:11px">PDF</a>` : ''}
+          ${s.archivo_soporte_id ? `<a href="/api/archivo?id=${s.archivo_soporte_id}" target="_blank" class="lnk" style="font-size:11px">Soporte</a>` : ''}
+        </div>
+      </td>
       <td>${corregir}</td></tr>`;
   }).join('');
   $('#vacioSol').hidden = lista.length > 0;
@@ -188,12 +214,83 @@ $('#csvPersonas').onclick = () => descargarCSV(
   [['titular_nombre', 'Titular'], ['tipo_doc', 'Tipo doc'], ['titular_num_doc', 'Documento'], ['asistencia', 'Asistencia'], ['plan', 'Plan'],
    ['mascota', 'Mascota'], ['personas', 'Personas cubiertas'], ['valor_mensual', 'Valor mensual'], ['fecha_alta', 'Desde']], D.consolidado);
 
+let mFilas = [];
+let mLoteId = '';
+$('#sMasivaBtn').onclick = () => { $('#mArchivo').value = ''; $('#mSoporte').value = ''; $('#mInfo').innerHTML = ''; mFilas = []; $('#mOk').disabled = true; $('#dMasiva').showModal(); };
+$('#mPlantilla').onclick = () => {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet([{ tipo_doc: 'CC', num_doc: '12345678', nombres: 'Juan', apellidos: 'Pérez', fecha_nac: '01/01/1990', genero: 'M', celular: '3000000000', correo: 'juan@ejemplo.com', ciudad: 'Bogotá', direccion: 'Calle 1', asistencia: 'Doctor 360', plan: 'Light', modelo: '1', forma_pago: 'Nomina', valor_mensual: 25000 }]);
+  XLSX.utils.book_append_sheet(wb, ws, "Datos");
+  const wsInst = XLSX.utils.aoa_to_sheet([["Instrucciones para altas masivas"], ["No modifique las columnas."], ["Las fechas deben ser dd/mm/aaaa."]]);
+  XLSX.utils.book_append_sheet(wb, wsInst, "Instrucciones");
+  XLSX.writeFile(wb, "Plantilla_CargaMasiva.xlsx");
+};
+$('#mArchivo').onchange = async e => {
+  const f = e.target.files[0]; mFilas = []; $('#mOk').disabled = true; if (!f) return;
+  const data = await f.arrayBuffer();
+  const wb = XLSX.read(data);
+  mFilas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+  if (!mFilas.length) return $('#mInfo').innerHTML = '<div class="notice bad">Archivo vacío</div>';
+  mLoteId = 'MAS-' + Date.now().toString(36);
+  let html = `<div class="notice info">${mFilas.length} fila(s) leídas.</div>`;
+  let bloq = 0;
+  mFilas.forEach((r, i) => {
+    let errs = [];
+    if (!r.num_doc) errs.push('Falta documento');
+    if (!r.nombres || !r.apellidos) errs.push('Falta nombre/apellido');
+    if (!r.asistencia || !r.plan) errs.push('Falta asistencia/plan');
+    if (errs.length) { bloq++; html += `<div style="color:red;font-size:12px">Fila ${i+2}: ${errs.join(', ')}</div>`; }
+  });
+  if (bloq > 0) html += `<div>${bloq} fila(s) tienen errores bloqueantes. Se ignorarán.</div>`;
+  $('#mInfo').innerHTML = html;
+  $('#mOk').disabled = mFilas.length === 0;
+};
+$('#mOk').onclick = async () => {
+  $('#mOk').disabled = true;
+  let soporte_id = null;
+  const fSoporte = $('#mSoporte').files[0];
+  if (fSoporte) {
+    try {
+      const { put } = await import('https://esm.sh/@vercel/blob@0.23.4?bundle');
+      const rT = await api('/api/archivo', { method:'POST', body: { accion:'token_subida', tipo:'soporte_nomina', id_inscripcion: mLoteId } });
+      const bRes = await put(rT.clientToken.pathname, fSoporte, { multipart: true, token: rT.clientToken.token });
+      const rReg = await api('/api/archivo', { method:'POST', body: { accion:'registrar', id_inscripcion: mLoteId, tipo:'soporte_nomina', url: bRes.url } });
+      soporte_id = rReg.id;
+    } catch(ex) { toast('Falló la subida del soporte: ' + ex.message); $('#mOk').disabled = false; return; }
+  }
+  
+  const lotes = [];
+  for (let i = 0; i < mFilas.length; i += 200) lotes.push(mFilas.slice(i, i + 200));
+  let cargadas = 0, omitidas = 0, errores = 0;
+  try {
+    for (const lote of lotes) {
+      const r = await api('/api/admin', { method: 'POST', body: { accion: 'altas_masivas', empresa_id: D.empresa.id, id_lote: mLoteId, filas: lote, archivo_soporte_id: soporte_id } });
+      cargadas += r.cargadas || 0;
+      omitidas += r.omitidas || 0;
+      errores += (r.errores || []).length;
+    }
+    toast(`${cargadas} cargadas, ${omitidas} repetidas omitidas, ${errores} con error.`);
+    $('#dMasiva').close();
+    cargar($('#periodo').value);
+  } catch(x) {
+    $('#mInfo').innerHTML = `<div class="notice bad"><strong>${esc(x.message)}</strong>${x.datos && x.datos.errores ? `<ul>${x.datos.errores.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}</div>`;
+    $('#mOk').disabled = false;
+  }
+};
+
 (async () => {
   try {
     SES = await api('/api/sesion');
-    const volver = SES.usuario.rol !== 'empresa' ? '<a class="link-w" href="/admin">← Administración</a>' : '';
+    // empresa_admin y empresa_usuario ven el portal
+    if (!['empresa_admin', 'empresa_usuario'].includes(SES.usuario.rol)) {
+      // Roles internos pueden ver el portal de una empresa por empresa_id en la URL
+      if (!empresaParam) { location.replace('/admin'); return; }
+    }
+    if (SES.usuario.rol === 'empresa_admin') $('#sMasivaBtn').hidden = false;
+    
+    const volver = !['empresa_admin', 'empresa_usuario'].includes(SES.usuario.rol)
+      ? '<a class="link-w" href="/admin">← Administración</a>' : '';
     pintarUsuario(SES, volver);
-    if (SES.usuario.rol !== 'empresa' && !empresaParam) { location.replace('/admin'); return; }
     await cargar();
     $('#cargando').hidden = true; $('#app').hidden = false;
   } catch (x) {

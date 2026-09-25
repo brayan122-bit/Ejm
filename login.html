@@ -19,6 +19,24 @@
     <div class="f"><label for="clave">Contraseña</label><input type="password" id="clave" autocomplete="current-password" required></div>
     <div class="notice bad" id="err" hidden></div>
     <button class="btn" id="btn" type="submit">Ingresar</button>
+    <p style="margin:14px 0 0;text-align:center;font-size:13px">
+      <button type="button" class="lnk" id="btnSolicitar">¿No tiene cuenta? Solicitar acceso</button>
+    </p>
+  </form>
+
+  <!-- Formulario de solicitud de acceso (auto-registro) -->
+  <form class="login" id="formSolicitar" hidden novalidate>
+    <h2>Solicitar acceso</h2>
+    <p class="sub">Escriba sus datos. Si su empresa está registrada con su dominio de correo, su solicitud quedará pendiente de aprobación.</p>
+    <div class="f"><label for="sEmail">Correo corporativo</label><input type="email" id="sEmail" autocomplete="username"></div>
+    <div class="f"><label for="sNombre">Nombre completo</label><input type="text" id="sNombre" autocomplete="name"></div>
+    <div class="f"><label for="sClave">Contraseña (mínimo 10 caracteres, letras y números)</label><input type="password" id="sClave" autocomplete="new-password"></div>
+    <div class="notice bad" id="sErr" hidden></div>
+    <div class="notice ok" id="sOk" hidden></div>
+    <button class="btn" id="sBtnEnviar" type="submit">Enviar solicitud</button>
+    <p style="margin:14px 0 0;text-align:center;font-size:13px">
+      <button type="button" class="lnk" id="btnVolver">← Volver al ingreso</button>
+    </p>
   </form>
 </main>
 <script>
@@ -27,7 +45,8 @@ const $ = s => document.querySelector(s);
 function destino(rol) {
   const n = new URLSearchParams(location.search).get('next') || '';
   if (/^\/(?!\/)[\w\-./?=&%]*$/.test(n) && !n.startsWith('/login')) return n;
-  return rol === 'empresa' ? '/portal' : '/admin';
+  // Roles de empresa van al portal; roles internos van al panel de administración
+  return ['empresa_admin', 'empresa_usuario'].includes(rol) ? '/portal' : '/admin';
 }
 fetch('/api/sesion').then(r => r.ok ? r.json() : null).then(d => { if (d && d.usuario) location.replace(destino(d.usuario.rol)); }).catch(() => {});
 $('#form').addEventListener('submit', async e => {
@@ -43,6 +62,29 @@ $('#form').addEventListener('submit', async e => {
   } catch (x) {
     err.textContent = x.message === 'Failed to fetch' ? 'Sin conexión. Intente de nuevo.' : x.message; err.hidden = false;
     btn.disabled = false; btn.textContent = 'Ingresar'; $('#clave').select();
+  }
+});
+
+// Alternar entre login y solicitar acceso
+$('#btnSolicitar').onclick = () => { $('#form').hidden = true; $('#formSolicitar').hidden = false; $('#sEmail').focus(); };
+$('#btnVolver').onclick   = () => { $('#formSolicitar').hidden = true; $('#form').hidden = false; };
+
+// Envío de solicitud de acceso
+$('#formSolicitar').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('#sBtnEnviar'), sErr = $('#sErr'), sOk = $('#sOk');
+  sErr.hidden = true; sOk.hidden = true; btn.disabled = true; btn.textContent = 'Enviando…';
+  try {
+    const r = await fetch('/api/sesion', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accion: 'solicitar_acceso', email: $('#sEmail').value.trim(),
+        nombre: $('#sNombre').value.trim(), clave: $('#sClave').value }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'No se pudo enviar la solicitud.');
+    sOk.textContent = d.mensaje || 'Solicitud enviada.'; sOk.hidden = false;
+    btn.textContent = 'Enviado';
+  } catch (x) {
+    sErr.textContent = x.message === 'Failed to fetch' ? 'Sin conexión. Intente de nuevo.' : x.message; sErr.hidden = false;
+    btn.disabled = false; btn.textContent = 'Enviar solicitud';
   }
 });
 </script>

@@ -405,7 +405,7 @@ const STEPS = [
   { id:'pago', t:'Pago y firma' }, { id:'revision', t:'Revisión' }
 ];
 function nuevoEstado(convenio){
-  return { convenio: convenio || { empresa_id:null, empresa:'', nit:'', asesor:'', pago:'', valorEmpresa:'', valorColaborador:'' },
+  return { convenio: convenio || { empresa_id:null, empresa:'', nit:'', asesor:'', pago:'', valorEmpresa:'', valorColaborador:'', modelo_aplicado:'' },
     modalidad:'', planes:{ mascotas:[] }, titular:{ tipodoc:'CC' }, pagadorMismo:true, pagador:{},
     mascotas:[],
     conyuge:null, hijos:[], adicionales:[], beneficiarios:[],
@@ -444,12 +444,18 @@ function empresaActual(){
   if(!SESION) return null;
   return SESION.empresa || (SESION.empresas||[]).find(e=>e.id===S.convenio.empresa_id) || null;
 }
-// Modelo 1: solo nómina. Modelo 2: la empresa paga o cofinancia.
-function pagosPermitidos(){ const e = empresaActual(); if(!e) return []; return e.modelo===2 ? ['Empresa','Cofinanciado'] : ['Nomina']; }
+// Modelo 1: solo nómina. Modelo 2: la empresa paga o cofinancia. Modelo 3: Mixto (depende de modelo_aplicado).
+function pagosPermitidos(){ 
+  const e = empresaActual(); if(!e) return []; 
+  const m = e.modelo === 3 ? Number(S.convenio.modelo_aplicado) : e.modelo; 
+  if (!m) return [];
+  return m === 2 ? ['Empresa','Cofinanciado'] : ['Nomina']; 
+}
 function productoHabilitado(gr, o){ const e = empresaActual(); return !e || !e.productos || !e.productos.length || e.productos.includes(gr.g+':'+o.v); }
 function aplicarEmpresa(id){
   const e = SESION.empresa || (SESION.empresas||[]).find(x=>x.id===id);
   Object.assign(S.convenio, e ? { empresa_id:e.id, empresa:e.nombre, nit:e.nit } : { empresa_id:null, empresa:'', nit:'' });
+  if (!e || e.modelo !== 3) S.convenio.modelo_aplicado = '';
   const p = pagosPermitidos();
   if(!p.includes(S.convenio.pago)) S.convenio.pago = p.length===1 ? p[0] : '';
 }
@@ -584,8 +590,9 @@ R.convenio = () => {
   </dl>` : ''}
   <div class="grid">
     ${fld('convenio.asesor','Nombre de quien diligencia (asesor)',{span:'s8',auto:'name'})}
-    ${!e ? '' : perm.length>1 ? seg('convenio.pago','¿Quién paga los planes en este convenio?',perm.map(k=>[k,PAGO[k]]),{vertical:true})
-      : `<div class="f"><span class="lab">Forma de pago</span><div class="ro">${esc(PAGO[perm[0]])}<small>Definida por el modelo ${e.modelo} de la empresa</small></div></div>`}
+    ${!e || e.modelo !== 3 ? '' : seg('convenio.modelo_aplicado','Modelo de pago para esta inscripción',[[1,'Modelo 1 · El colaborador paga por nómina'],[2,'Modelo 2 · La empresa paga o cofinancia']],{vertical:true, span:'s8'})}
+    ${!e || !perm.length ? '' : perm.length>1 ? seg('convenio.pago','¿Quién paga los planes en este convenio?',perm.map(k=>[k,PAGO[k]]),{vertical:true})
+      : `<div class="f"><span class="lab">Forma de pago</span><div class="ro">${esc(PAGO[perm[0]])}<small>Definida por el modelo ${e.modelo === 3 ? S.convenio.modelo_aplicado : e.modelo}</small></div></div>`}
   </div>
   ${S.convenio.pago==='Cofinanciado' ? `<div class="block" style="margin-top:18px"><h3>Cofinanciación</h3>
     <p>Reparto del valor mensual del plan entre la empresa y el colaborador.</p>
@@ -834,17 +841,28 @@ R.pago = () => {
       <div class="msg"></div>`
     : `<div class="notice info">El PDF saldrá sin firma. Imprímalo y pida que firmen en el recuadro de la página 2.</div>`}
   </div>
+  ${hayDescuento() ? `
+  <div class="block" data-f="soporte_nomina"><h3>Soporte de autorización de descuento</h3>
+    <p>Adjunte foto o PDF del soporte firmado.${S.firmaModo === 'papel' ? ' <strong>Obligatorio porque la firma es en papel.</strong>' : ' Opcional si la firma es en pantalla.'}</p>
+    <div style="margin-top:12px">
+      ${S.soporte ? `<div class="msg">Ya hay un archivo: <strong>${esc(S.soporte.name)}</strong> <button type="button" class="lnk" onclick="delete S.soporte; render()">Quitar</button></div>` : 
+      `<input type="file" id="inpSoporteNomina" accept="image/jpeg, image/png, application/pdf" capture="environment" onchange="comprimirImagen(this.files[0]).then(f => { S.soporte = f; render(); }).catch(e => { document.getElementById('msgSoporteNomina').textContent = e.message; })">`}
+      <div class="msg" id="msgSoporteNomina" style="color:var(--red-dark); font-size:13px; margin-top:4px;"></div>
+    </div>
+  </div>` : ''}
   <div class="grid">${fld('observaciones','Observaciones',{area:true,opt:true,max:200})}</div>`;
 };
 
 function cajaEnvio(){
-  const g = generado, panel = SESION && SESION.usuario.rol==='empresa' ? '/portal' : '/admin';
+  const g = generado, esEmpresa = SESION && ['empresa_admin','empresa_usuario'].includes(SESION.usuario.rol), panel = esEmpresa ? '/portal' : '/admin';
   const st = g.envio==='ok' ? `<div class="done-box"><h3>Solicitud enviada</h3><div>${esc(g.nombre)} quedó descargado. La inscripción quedó <strong>pendiente de validación</strong>; puede ver su estado en <a href="${panel}">su panel</a>.</div>`
+    : g.envio==='error_pdf' ? `<div class="done-box" style="background:var(--red-tint)"><h3 style="color:var(--red-dark)">Inscripción enviada, pero falló la subida de los archivos (PDF/Soporte)</h3><div>Quedó guardada con una alerta. Revise su conexión y toque «Reintentar subida».</div>`
     : g.envio==='error' ? `<div class="done-box" style="background:var(--red-tint)"><h3 style="color:var(--red-dark)">El PDF se generó, pero la solicitud no se envió</h3><div>${esc(g.error||'')} Revise su conexión y toque «Reintentar envío».</div>`
     : `<div class="done-box" style="background:#EEF3FF"><h3 style="color:#173A8C">Enviando la solicitud…</h3><div>${esc(g.nombre)} quedó descargado.</div>`;
   return st + `<div class="row-btns"><button type="button" class="btn ghost" data-act="redownload">Descargar PDF de nuevo</button>
     ${g.envio==='error' ? '<button type="button" class="btn primary" data-act="reenviar">Reintentar envío</button>' : ''}
-    ${g.envio==='ok' ? `<button type="button" class="btn primary" data-act="nueva">Nueva inscripción en ${esc(S.convenio.empresa)}</button>` : ''}</div></div>`;
+    ${g.envio==='error_pdf' ? '<button type="button" class="btn primary" data-act="reenviar">Reintentar subida</button>' : ''}
+    ${g.envio==='ok' || g.envio==='error_pdf' ? `<button type="button" class="btn primary" data-act="nueva">Nueva inscripción en ${esc(S.convenio.empresa)}</button>` : ''}</div></div>`;
 }
 R.revision = () => {
   const c = cobertura(), t = S.titular, f = firmante();
@@ -925,6 +943,8 @@ function validar(id){
   if(id==='convenio'){
     if(!S.convenio.empresa_id) E.push(['convenio.empresa_id','Elija la empresa del convenio.']);
     if(!S.convenio.asesor.trim()) E.push(['convenio.asesor','Escriba su nombre.']);
+    const empAct = empresaActual();
+    if(empAct && empAct.modelo === 3 && !S.convenio.modelo_aplicado) E.push(['convenio.modelo_aplicado','Elija el modelo de pago para esta inscripción.']);
     if(S.convenio.empresa_id && !pagosPermitidos().includes(S.convenio.pago)) E.push(['convenio.pago','Elija quién paga los planes.']);
     if(S.convenio.pago==='Cofinanciado'){
       const v = valorPlan();
@@ -1020,6 +1040,7 @@ function validar(id){
     if(hayDescuento() && !S.aut.descuento) E.push(['aut.descuento','El colaborador debe autorizar el descuento por nómina.']);
     if(!S.aut.declaracion) E.push(['aut.declaracion','El colaborador debe aceptar la declaración.']);
     if(S.firmaModo==='pantalla' && !S.firma) E.push(['firma','Falta la firma. Si firmará en papel, elija esa opción.']);
+    if(S.firmaModo==='papel' && !S.soporte && hayDescuento()) E.push(['soporte_nomina','El soporte es obligatorio si la firma es en papel.']);
   }
   return { E, W };
 }
@@ -1054,8 +1075,8 @@ function render(){
   }).join('');
   $('#where').textContent = `Paso ${cur+1} de ${STEPS.length}`;
   $('#btnPrev').style.visibility = cur===0 ? 'hidden' : 'visible';
-  $('#btnNext').textContent = id==='revision' ? (!generado ? 'Generar PDF y enviar' : generado.envio==='ok' ? 'Nueva inscripción' : generado.envio==='error' ? 'Reintentar envío' : 'Enviando…') : 'Siguiente';
-  $('#btnNext').disabled = !!(generado && generado.envio==='enviando' && id==='revision');
+  $('#btnNext').textContent = id==='revision' ? (!generado ? 'Generar PDF y enviar' : generado.envio==='ok' ? 'Nueva inscripción' : generado.envio==='error_pdf' ? 'Reintentar subida' : generado.envio==='error' ? 'Reintentar envío' : 'Enviando…') : 'Siguiente';
+  $('#btnNext').disabled = !!(generado && (generado.envio==='enviando' || generado.envio==='subiendo') && id==='revision');
   if(id==='pago') initPad();
   pintarCobertura();
 }
@@ -1278,7 +1299,7 @@ function filasCSV(id, nombreArchivo){
     titular_tipo_doc:t.tipodoc||'', titular_num_doc:t.numdoc||'', titular_fecha_nac:t.fnac||'', titular_edad:edadDe(t.fnac),
     titular_genero:t.genero||'', titular_celular:t.celular||'', titular_correo:t.correo||'', titular_ciudad:t.ciudad||'',
     titular_barrio:t.barrio||'', titular_direccion:t.direccion||'',
-    modalidad:m ? m.n : '', pago:PAGO[S.convenio.pago]||'', pago_id:S.convenio.pago||'',
+    modalidad:m ? m.n : '', pago:PAGO[S.convenio.pago]||'', pago_id:S.convenio.pago||'', modelo_aplicado:S.convenio.modelo_aplicado||'',
     aut_datos:S.aut.datos?'Si':'No', aut_descuento: hayDescuento() ? (S.aut.descuento?'Si':'No') : '', firma_modo:S.firmaModo };
   // La póliza puede venir de la asistencia o, si ninguna la trae, del plan Familiar/Integral.
   const polDePlan = !!(m && m.pol) && !c.niveles.some(x=>x.o.pol);
@@ -1319,21 +1340,84 @@ function exportarCSV(){
   descargar(csv, `Consolidado_inscripciones_${emp}_${hoy().split('/').reverse().join('')}.csv`, 'text/csv;charset=utf-8');
   exportado = true;
 }
+async function comprimirImagen(file) {
+  if (file.type === 'application/pdf') return file;
+  if (/heic|heif/i.test(file.name) || file.type === 'image/heic') {
+    throw new Error('Tome la foto en JPG o envíe un PDF');
+  }
+  if (!file.type.startsWith('image/')) throw new Error('Archivo no soportado');
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(img.src);
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > 2000 || h > 2000) {
+        if (w > h) { h = Math.round(h * 2000 / w); w = 2000; }
+        else { w = Math.round(w * 2000 / h); h = 2000; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      canvas.toBlob(b => resolve(new File([b], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })), 'image/jpeg', 0.85);
+    };
+    img.onerror = () => reject(new Error('No se pudo leer la imagen'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
 async function enviarInscripcion(){
   if(!generado) return;
   generado.envio = 'enviando'; generado.error = ''; render();
-  try{
-    const r = await fetch(CONFIG.ENDPOINT_URL, { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ empresa_id:S.convenio.empresa_id, filas:generado.filas }) });
-    const d = await r.json().catch(()=>({}));
-    if(r.status===401){ generado.envio='error'; generado.error='Su sesión terminó: ingrese de nuevo en otra pestaña y reintente.'; }
-    else if(!r.ok) { generado.envio='error'; generado.error = d.error || 'Error del servidor.'; }
-    else { generado.envio='ok'; toast('Inscripción enviada. Queda pendiente de validación.'); }
+  
+  try {
+    try {
+      const { put } = await import('https://esm.sh/@vercel/blob@0.23.4?bundle');
+      const subeArchivo = async (file, tipo) => {
+        const rT = await fetch(CONFIG.ENDPOINT_URL.replace('/inscripcion','/archivo'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ accion:'token_subida', tipo, id_inscripcion: generado.id_inscripcion }) });
+        const tData = await rT.json();
+        if(!rT.ok) throw new Error(tData.error || 'Error en token');
+        const res = await put(file.name, file, { access: 'public', token: tData.clientToken });
+        const rReg = await fetch(CONFIG.ENDPOINT_URL.replace('/inscripcion','/archivo'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ accion:'registrar', tipo, id_inscripcion: generado.id_inscripcion, url: res.url }) });
+        if(!rReg.ok) throw new Error('Error al registrar archivo en DB');
+      };
+
+      if (!generado.pdfSubido) {
+        await subeArchivo(new File([generado.bytes], generado.nombre, { type: 'application/pdf' }), 'pdf_inscripcion');
+        generado.pdfSubido = true;
+      }
+      if (generado.soporte && !generado.soporteSubido) {
+        await subeArchivo(generado.soporte, 'soporte_nomina');
+        generado.soporteSubido = true;
+      }
+      generado.errorUpload = false;
+    } catch(e) {
+      console.error('Falla al subir archivos:', e);
+      generado.errorUpload = true;
+    }
+
+    if (!generado.enviadaBD) {
+      const r = await fetch(CONFIG.ENDPOINT_URL, { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ empresa_id:S.convenio.empresa_id, filas:generado.filas }) });
+      const d = await r.json().catch(()=>({}));
+      if(r.status===401){ generado.envio='error'; generado.error='Su sesión terminó: ingrese de nuevo en otra pestaña y reintente.'; }
+      else if(!r.ok) { generado.envio='error'; generado.error = d.error || 'Error del servidor.'; }
+      else { 
+        generado.enviadaBD = true;
+        generado.envio = generado.errorUpload ? 'error_pdf' : 'ok';
+      }
+    } else {
+      generado.envio = generado.errorUpload ? 'error_pdf' : 'ok';
+    }
+    
+    if (generado.envio==='ok') toast('Inscripción enviada y archivos guardados.');
   } catch(e){ generado.envio='error'; generado.error='Sin conexión.'; }
   $('#btnNext').disabled = false; render();
 }
 async function generar(){
   const r = validar('pago'); if(r.E.length){ ir(STEPS.findIndex(s=>s.id==='pago')); setTimeout(()=>pintarValidacion(r), 50); return; }
+  
+  let soporte = S.soporte || null;
+  
   const btn = $('#btnNext'); btn.disabled = true; btn.textContent = 'Generando…';
   try{
     const bytes = await construirPDF();
@@ -1344,7 +1428,7 @@ async function generar(){
     registros.push({ titular:nombreCompleto(S.titular), doc:(S.titular.tipodoc||'')+' '+S.titular.numdoc,
       planes:cobertura().sel.join(', '), personas:filas.length,
       hora:new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}), filas });
-    exportado = false; generado = { nombre, bytes, filas, envio:'enviando' };
+    exportado = false; generado = { nombre, bytes, filas, envio:'enviando', id_inscripcion: id, soporte };
     render(); await enviarInscripcion(); return;
   } catch(e){ console.error(e); toast('No se pudo generar el PDF: ' + e.message); }
   btn.disabled = false; render();
@@ -1407,8 +1491,9 @@ document.addEventListener('click', e => {
     siguiente._ok = null; render(); window.scrollTo(0,y); return;
   }
   if(el.dataset.seg){
-    setP(el.dataset.seg, el.dataset.v); siguiente._ok = null;
-    if(el.dataset.seg==='firmaModo' || el.dataset.seg==='convenio.pago'){ render(); window.scrollTo(0,y); return; }
+    setP(el.dataset.seg, el.dataset.seg==='convenio.modelo_aplicado' ? Number(el.dataset.v) : el.dataset.v); siguiente._ok = null;
+    if(el.dataset.seg==='convenio.modelo_aplicado'){ const p = pagosPermitidos(); if(!p.includes(S.convenio.pago)) S.convenio.pago = p.length===1 ? p[0] : ''; }
+    if(el.dataset.seg==='firmaModo' || el.dataset.seg==='convenio.pago' || el.dataset.seg==='convenio.modelo_aplicado'){ render(); window.scrollTo(0,y); return; }
     el.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed', x===el));
     const bx = el.closest('.err'); if(bx) bx.classList.remove('err');
     pintarCobertura(); return;
@@ -1445,7 +1530,7 @@ async function iniciar(){
     const d = await r.json(); if(!r.ok) throw new Error(d.error || 'No se pudo cargar la sesión.');
     SESION = d;
   } catch(e){ $('#step').innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; return; }
-  const interno = SESION.usuario.rol !== 'empresa';
+  const interno = !['empresa_admin','empresa_usuario'].includes(SESION.usuario.rol);
   $('#lnkPanel').href = interno ? '/admin' : '/portal';
   $('#lnkPanel').textContent = interno ? 'Administración' : 'Mi panel';
   $('#empresaSesion').textContent = SESION.empresa ? SESION.empresa.nombre : SESION.usuario.nombre;
@@ -1564,7 +1649,7 @@ iniciar();
       if(!r.ok) throw new Error(d.error || 'No se pudo registrar la baja.');
       const nombres = encontradas.filter(a => ids.includes(a.id)).map(a => a.asistencia + ' ' + a.plan).join(', ');
       el('bajaOk').innerHTML = `<strong>Baja registrada y pendiente de validación.</strong> ${esc(encontradas[0].titular_nombre)} (${esc(docBuscado)}): ${esc(nombres)}.
-        <a href="${SESION.usuario.rol === 'empresa' ? '/portal' : '/admin'}">Ver en el panel</a>`;
+        <a href="${['empresa_admin','empresa_usuario'].includes(SESION.usuario.rol) ? '/portal' : '/admin'}">Ver en el panel</a>`;
       el('bajaOk').hidden = false; limpiar(); toast('Solicitud de baja registrada.'); window.scrollTo(0, 0);
     } catch(x){ toast(x.message === 'Failed to fetch' ? 'Sin conexión. Intente de nuevo.' : x.message); }
     finally { btn.disabled = false; btn.textContent = 'Registrar baja'; }
