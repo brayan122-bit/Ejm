@@ -1,4 +1,5 @@
-// Catálogo, reglas de negocio y validaciones automáticas. Debe coincidir con CATALOGO de index.html.
+// Catálogo, reglas de negocio y validaciones automáticas.
+// El CATALOGO coincide con el de index.html y se sirve también desde /api/sesion.
 
 export const CATALOGO = {
   doctor:       { corto: 'Doctor 360',       t: 'Asistencia Doctor 360', edadMax: true, planes: {
@@ -17,16 +18,26 @@ export const PRODUCTOS = Object.entries(CATALOGO).flatMap(([g, gr]) =>
   Object.entries(gr.planes).map(([v, p]) => ({ clave: `${g}:${v}`, asistencia_id: g, plan_id: v, asistencia: gr.corto, plan: p.n })));
 export const producto = (g, v) => PRODUCTOS.find(p => p.asistencia_id === g && p.plan_id === v) || null;
 
-// Modelo 1: el colaborador paga por nómina. Modelo 2: la empresa paga todo o cofinancia (con descuento).
+// Modelos de pago:
+//  1 = El colaborador paga por nómina
+//  2 = La empresa paga o cofinancia (descuento aplicable)
+//  3 = Mixto (la empresa puede usar ambos modelos por inscripción)
 export const MODELOS = {
   1: { n: 'Modelo 1 · El colaborador paga por nómina', pagos: ['Nomina'] },
-  2: { n: 'Modelo 2 · La empresa paga o cofinancia', pagos: ['Empresa', 'Cofinanciado'] }
+  2: { n: 'Modelo 2 · La empresa paga o cofinancia', pagos: ['Empresa', 'Cofinanciado'] },
+  3: { n: 'Mixto · Modelo 1 o Modelo 2 por inscripción', pagos: ['Nomina', 'Empresa', 'Cofinanciado'] }
 };
 export const PAGOS = { Nomina: 'El colaborador paga por nómina', Empresa: 'La empresa paga', Cofinanciado: 'Cofinanciado (parte por nómina)' };
 export const DESCUENTO_MODELO_2 = Math.min(100, Math.max(0, Number(process.env.DESCUENTO_MODELO_2 ?? 5)));
 export const EDAD = { titularMin: 18, titularMax: 74 };
 
-// Cuenta a las personas que cubre una fila: titular + cónyuge + hijos + adicionales registrados.
+// Pagos válidos por modelo individual (para validar modelo_aplicado en inscripciones)
+export const PAGOS_MODELO = {
+  1: new Set(['Nomina']),
+  2: new Set(['Empresa', 'Cofinanciado'])
+};
+
+// Cuenta a las personas que cubre una fila: titular + cónyuge + hijos + adicionales.
 export function personasDe(d) {
   let n = 1;
   if (d.conyuge_nombres || d.conyuge_num_doc) n++;
@@ -54,11 +65,11 @@ const PERSONAS_FAM = [['conyuge_', 'cónyuge'], ...[1, 2, 3, 4].map(i => [`hijo$
 
 /**
  * Validaciones automáticas. No bloquean: ayudan al validador a decidir.
- * @param solicitudes  filas del periodo a revisar (con .datos)
+ * @param solicitudes  filas del periodo a revisar (con .datos y .modelo_aplicado)
  * @param todas        todas las filas del mismo periodo y empresas (para detectar duplicados)
- * @param consolidado  filas del consolidado de esas empresas (activas y retiradas)
- * @param empresas     Map id -> { modelo, productos }
- * Devuelve Map id -> [ { codigo, texto } ]
+ * @param consolidado  filas del consolidado de esas empresas
+ * @param empresas     Map id → { modelo, productos }
+ * Devuelve Map id → [ { codigo, texto } ]
  */
 export function alertasDe(solicitudes, todas, consolidado, empresas) {
   const res = new Map();
@@ -88,11 +99,24 @@ export function alertasDe(solicitudes, todas, consolidado, empresas) {
       else if (Array.isArray(emp.productos) && emp.productos.length && !emp.productos.includes(`${s.asistencia_id}:${s.plan_id}`))
         add('producto', 'Producto no habilitado para la empresa');
 
-      const pagoId = d.pago_id;
-      if (emp.modelo && pagoId && !MODELOS[emp.modelo].pagos.includes(pagoId)) add('modelo', `La forma de pago no corresponde al modelo ${emp.modelo}`);
-      if ((pagoId === 'Nomina' || pagoId === 'Cofinanciado') && d.aut_descuento !== 'Si') add('autorizacion', 'Sin autorización de descuento por nómina');
+      // Validar forma de pago contra modelo_aplicado de la solicitud.
+      // Para empresa mixta (3), la solicitud debe traer modelo_aplicado (1 o 2).
+      const pagoId = d.pago_id || s.pago;
+      const modeloCheck = s.modelo_aplicado && s.modelo_aplicado <= 2 ? s.modelo_aplicado : (emp.modelo <= 2 ? emp.modelo : null);
+      if (modeloCheck && pagoId && !PAGOS_MODELO[modeloCheck].has(pagoId))
+        add('modelo', `La forma de pago no corresponde al modelo ${modeloCheck}`);
+
+      if (s.origen_tipo === 'formulario' && !s.archivo_pdf_id) add('archivo', 'PDF no guardado');
+
+      const sinAuthDesc = (pagoId === 'Nomina' || pagoId === 'Cofinanciado') &&
+                          (d.aut_descuento !== 'Si' || (d.firma_modo === 'papel' && !s.archivo_soporte_id));
+      if (sinAuthDesc) add('autorizacion', 'Sin autorización de descuento');
+
       if (d.aut_datos !== 'Si') add('autorizacion', 'Sin autorización de tratamiento de datos');
       if (d.firma_modo === 'papel') add('autorizacion', 'Firma en papel: verificar el soporte firmado');
+
+      // Alerta para cargas masivas por Excel
+      if (s.origen_tipo === 'excel') add('excel', 'Carga masiva: verificar autorizaciones del lote');
 
       const planInfo = CATALOGO[s.asistencia_id]?.planes[s.plan_id];
       const yaActiva = activos.find(c => c.empresa_id === s.empresa_id && c.titular_num_doc === s.titular_num_doc &&
@@ -117,26 +141,39 @@ export function alertasDe(solicitudes, todas, consolidado, empresas) {
   return res;
 }
 
-// Resumen de conciliación de una empresa a partir de su consolidado activo.
+/**
+ * Resumen de conciliación de una empresa a partir de su consolidado activo.
+ * Para empresa mixta (modelo=3): desglose subtotal_m1 / subtotal_m2,
+ * el descuento solo aplica sobre el subtotal_m2.
+ */
 export function resumenConciliacion(activos, modelo) {
   const porTitular = new Map();
   const porProducto = new Map();
-  let total = 0, emp = 0, col = 0;
+  let total = 0, emp = 0, col = 0, totalM1 = 0, totalM2 = 0;
   for (const c of activos) {
     porTitular.set(c.titular_num_doc, Math.max(porTitular.get(c.titular_num_doc) || 0, c.personas || 1));
     const k = `${c.asistencia} · ${c.plan}`;
     const p = porProducto.get(k) || { asistencia: c.asistencia, plan: c.plan, cantidad: 0, valor: 0 };
     p.cantidad++; p.valor += c.valor_mensual || 0; porProducto.set(k, p);
     total += c.valor_mensual || 0; emp += c.valor_empresa || 0; col += c.valor_colaborador || 0;
+    // Para el desglose por modelo en empresa mixta
+    const modeloFila = c.modelo_aplicado || (modelo <= 2 ? modelo : 1);
+    if (modeloFila === 1) totalM1 += c.valor_mensual || 0; else totalM2 += c.valor_mensual || 0;
   }
-  const pct = modelo === 2 ? DESCUENTO_MODELO_2 : 0;
-  const descuento = Math.round(total * pct / 100);
+  const esMixto = modelo === 3;
+  // El descuento aplica: en modelo 2 sobre total; en mixto solo sobre subtotal_m2
+  const baseDescuento = modelo === 2 ? total : (esMixto ? totalM2 : 0);
+  const pct = baseDescuento > 0 ? DESCUENTO_MODELO_2 : 0;
+  const descuento = Math.round(baseDescuento * pct / 100);
   return {
     titulares: porTitular.size,
     personas: [...porTitular.values()].reduce((a, b) => a + b, 0),
     asistencias: activos.length,
     por_producto: [...porProducto.values()].sort((a, b) => a.asistencia.localeCompare(b.asistencia) || a.plan.localeCompare(b.plan)),
     valor_total: total, valor_empresa: emp, valor_colaborador: col,
+    es_mixto: esMixto,
+    subtotal_m1: esMixto ? totalM1 : null,
+    subtotal_m2: esMixto ? totalM2 : null,
     descuento_pct: pct, descuento_valor: descuento, total_a_pagar: total - descuento
   };
 }

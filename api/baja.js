@@ -7,7 +7,7 @@ const docValido = d => /^[0-9A-Za-z]{4,20}$/.test(d);
 
 export default async function handler(req, res) {
   try {
-    const u = await exigir(req, res, ['empresa', 'admin', 'validador']); if (!u) return;
+    const u = await exigir(req, res, ['empresa_admin', 'empresa_usuario', 'maestro', 'validador']); if (!u) return;
     await asegurarEsquema();
 
     if (req.method === 'GET') {
@@ -49,18 +49,19 @@ export default async function handler(req, res) {
 
     const periodo = periodoActual();
     const fecha = new Intl.DateTimeFormat('es-CO', { timeZone: 'America/Bogota', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date());
-    await sql.transaction(filas.map(c => {
+    const creadas = await sql.transaction(filas.map(c => {
       // Mismos campos que ya llegaban a la base de bajas.
       const d = { fecha, empresa: emp.nombre, nit: emp.nit, asesor, titular_nombre: c.titular_nombre,
         titular_tipo_doc: (c.datos && c.datos.titular_tipo_doc) || 'CC', titular_num_doc: c.titular_num_doc,
         asistencia: c.asistencia, plan: c.plan, mascota: c.mascota || '', valor_mensual: c.valor_mensual, motivo };
       return sql`INSERT INTO solicitudes (periodo, tipo, empresa_id, enviado_por, titular_num_doc, titular_nombre,
-          asistencia_id, asistencia, plan_id, plan, mascota, pago, valor_mensual, valor_empresa, valor_colaborador, personas, consolidado_id, datos)
+          asistencia_id, asistencia, plan_id, plan, mascota, pago, valor_mensual, valor_empresa, valor_colaborador, personas, consolidado_id, modelo_aplicado, datos)
         VALUES (${periodo}, 'baja', ${emp.id}, ${u.id}, ${c.titular_num_doc}, ${c.titular_nombre}, ${c.asistencia_id}, ${c.asistencia},
           ${c.plan_id}, ${c.plan}, ${c.mascota}, ${c.pago}, ${c.valor_mensual}, ${c.valor_empresa}, ${c.valor_colaborador}, ${c.personas},
-          ${c.id}, ${JSON.stringify(d)}::jsonb)`;
+          ${c.id}, ${c.modelo_aplicado}, ${JSON.stringify(d)}::jsonb)
+        RETURNING id`;
     }));
-    return res.status(200).json({ ok: true, registradas: filas.length });
+    return res.status(200).json({ ok: true, registradas: filas.length, ids: creadas.map(r => r[0].id) });
   } catch (e) {
     registrarError('Error en bajas', e);
     return res.status(500).json({ error: 'No se pudo procesar la baja.' });

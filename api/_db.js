@@ -3,15 +3,86 @@ import { neon } from '@neondatabase/serverless';
 
 export const sql = neon(process.env.DATABASE_URL);
 
-// Crea las tablas la primera vez. Es idempotente: se puede ejecutar siempre.
+// ============================================================
+// MIGRACIONES: cada una se aplica una sola vez, en una
+// transacción atómica. El ID en schema_migraciones garantiza
+// que no se repita aunque el proceso arranque varias veces.
+// queries() devuelve arreglos frescos de PendingQuery en
+// cada llamada, lo que es necesario para sql.transaction.
+// ============================================================
+const MIGRACIONES = [
+  {
+    id: '001_empresas_dominios_modelo3',
+    queries: () => [
+      // Columna de dominios corporativos permitidos por empresa
+      sql`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS dominios JSONB NOT NULL DEFAULT '[]'::jsonb`,
+      // Ampliar modelo para aceptar 3 = Mixto
+      sql`ALTER TABLE empresas DROP CONSTRAINT IF EXISTS empresas_modelo_check`,
+      sql`ALTER TABLE empresas ADD CONSTRAINT empresas_modelo_check CHECK (modelo IN (1, 2, 3))`,
+    ]
+  },
+  {
+    id: '002_usuarios_estado_acceso',
+    queries: () => [
+      // Para auto-registro: el usuario queda pendiente hasta que empresa_admin lo active
+      sql`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS estado_acceso TEXT NOT NULL DEFAULT 'activo'`,
+      sql`ALTER TABLE usuarios ADD CONSTRAINT usuarios_estado_check
+            CHECK (estado_acceso IN ('activo', 'pendiente', 'rechazado'))`,
+    ]
+  },
+  {
+    id: '003_usuarios_roles_nuevos',
+    queries: () => [
+      // Eliminar constraint viejo para poder actualizar los datos primero
+      sql`ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS usuarios_rol_check`,
+      // Migrar roles viejos: admin → maestro, empresa → empresa_admin
+      sql`UPDATE usuarios SET rol = 'maestro' WHERE rol = 'admin'`,
+      sql`UPDATE usuarios SET rol = 'empresa_admin' WHERE rol = 'empresa'`,
+      // Constraint definitivo: SOLO los nuevos roles son válidos
+      sql`ALTER TABLE usuarios ADD CONSTRAINT usuarios_rol_check
+            CHECK (rol IN ('maestro', 'validador', 'empresa_admin', 'empresa_usuario'))`,
+    ]
+  },
+  {
+    id: '004_solicitudes_consolidado_campos',
+    queries: () => [
+      sql`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS modelo_aplicado SMALLINT`,
+      sql`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS origen_tipo TEXT NOT NULL DEFAULT 'formulario'`,
+      sql`ALTER TABLE consolidado ADD COLUMN IF NOT EXISTS modelo_aplicado SMALLINT`,
+    ]
+  },
+  {
+    id: '005_consolidado_modelo_aplicado_fill',
+    queries: () => [
+      // Filas existentes de empresas no mixtas (modelo 1 o 2): heredar el modelo de la empresa
+      sql`UPDATE consolidado c SET modelo_aplicado = e.modelo
+          FROM empresas e WHERE c.empresa_id = e.id AND c.modelo_aplicado IS NULL AND e.modelo IN (1, 2)`,
+      // Filas restantes (empresa mixta o sin modelo): deducir por forma de pago
+      sql`UPDATE consolidado SET modelo_aplicado = CASE WHEN pago = 'Nomina' THEN 1 ELSE 2 END
+          WHERE modelo_aplicado IS NULL`,
+      // Lo mismo para solicitudes de tipo alta
+      sql`UPDATE solicitudes s SET modelo_aplicado = e.modelo
+          FROM empresas e WHERE s.empresa_id = e.id AND s.modelo_aplicado IS NULL
+          AND e.modelo IN (1, 2) AND s.tipo = 'alta'`,
+      sql`UPDATE solicitudes SET modelo_aplicado = CASE WHEN pago = 'Nomina' THEN 1 ELSE 2 END
+          WHERE modelo_aplicado IS NULL AND tipo = 'alta'`,
+    ]
+  }
+];
+
+// Crea las tablas base la primera vez (sin los CHECK que manejan las migraciones)
+// y luego aplica las migraciones pendientes en orden.
 let esquemaListo = false;
 export async function asegurarEsquema() {
   if (esquemaListo) return;
+
+  // Tablas base: CREATE TABLE IF NOT EXISTS sin CHECK de modelo ni de rol.
+  // Las migraciones añaden/modifican esos constraints de forma segura.
   await sql`CREATE TABLE IF NOT EXISTS empresas (
     id         SERIAL PRIMARY KEY,
     nit        TEXT UNIQUE NOT NULL,
     nombre     TEXT NOT NULL,
-    modelo     SMALLINT NOT NULL DEFAULT 1 CHECK (modelo IN (1, 2)),
+    modelo     SMALLINT NOT NULL DEFAULT 1,
     productos  JSONB NOT NULL DEFAULT '[]'::jsonb,
     activa     BOOLEAN NOT NULL DEFAULT true,
     creado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -21,14 +92,13 @@ export async function asegurarEsquema() {
     email          TEXT UNIQUE NOT NULL,
     nombre         TEXT NOT NULL,
     hash           TEXT NOT NULL,
-    rol            TEXT NOT NULL CHECK (rol IN ('admin', 'validador', 'empresa')),
+    rol            TEXT NOT NULL,
     empresa_id     INTEGER REFERENCES empresas(id),
     activo         BOOLEAN NOT NULL DEFAULT true,
     version        INTEGER NOT NULL DEFAULT 1,
     creado_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
     ultimo_ingreso TIMESTAMPTZ
   )`;
-  // Cada fila es una asistencia enviada desde el formulario (alta) o una asistencia a retirar (baja).
   await sql`CREATE TABLE IF NOT EXISTS solicitudes (
     id              SERIAL PRIMARY KEY,
     recibido_en     TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -58,7 +128,6 @@ export async function asegurarEsquema() {
   )`;
   await sql`CREATE INDEX IF NOT EXISTS solicitudes_periodo_idx ON solicitudes (periodo, empresa_id)`;
   await sql`CREATE INDEX IF NOT EXISTS solicitudes_doc_idx ON solicitudes (empresa_id, titular_num_doc)`;
-  // Base de conciliación: quién tiene hoy cada asistencia en cada empresa.
   await sql`CREATE TABLE IF NOT EXISTS consolidado (
     id                SERIAL PRIMARY KEY,
     empresa_id        INTEGER NOT NULL REFERENCES empresas(id),
@@ -85,6 +154,38 @@ export async function asegurarEsquema() {
   )`;
   await sql`CREATE INDEX IF NOT EXISTS consolidado_empresa_idx ON consolidado (empresa_id, estado)`;
   await sql`CREATE INDEX IF NOT EXISTS consolidado_doc_idx ON consolidado (empresa_id, titular_num_doc)`;
+
+  await sql`CREATE TABLE IF NOT EXISTS archivos (
+    id             TEXT PRIMARY KEY,
+    empresa_id     INTEGER NOT NULL REFERENCES empresas(id),
+    id_inscripcion TEXT NOT NULL,
+    tipo           TEXT NOT NULL,
+    url            TEXT NOT NULL,
+    creado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`;
+  await sql`CREATE INDEX IF NOT EXISTS archivos_inscripcion_idx ON archivos (id_inscripcion)`;
+
+  // Sistema de migraciones
+  await sql`CREATE TABLE IF NOT EXISTS schema_migraciones (
+    id          TEXT PRIMARY KEY,
+    aplicada_en TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`;
+  const aplicadas = await sql`SELECT id FROM schema_migraciones`;
+  const idAplicadas = new Set(aplicadas.map(r => r.id));
+
+  for (const m of MIGRACIONES) {
+    if (idAplicadas.has(m.id)) continue;
+    try {
+      // Incluir el registro de la migración dentro de la misma transacción:
+      // si alguna query falla, el ID no queda guardado y se reintenta en el próximo arranque.
+      const qs = [...m.queries(), sql`INSERT INTO schema_migraciones (id) VALUES (${m.id})`];
+      await sql.transaction(qs);
+    } catch (e) {
+      // No bloquear el arranque; el error queda en los logs de Vercel.
+      console.error(`[schema] Migración ${m.id} falló:`, e?.message?.slice(0, 300));
+    }
+  }
+
   esquemaListo = true;
 }
 
@@ -144,4 +245,18 @@ export const entero = v => {
 export function registrarError(donde, e) {
   // Se registra solo el tipo de error, nunca los datos personales.
   console.error(donde + ':', e && e.message ? e.message.slice(0, 200) : 'desconocido');
+}
+
+// Dominios públicos que NO se permiten como dominio corporativo de empresa.
+export const DOMINIOS_PUBLICOS = new Set([
+  'gmail.com', 'googlemail.com', 'hotmail.com', 'hotmail.es', 'outlook.com', 'outlook.es',
+  'yahoo.com', 'yahoo.es', 'live.com', 'live.es', 'icloud.com', 'me.com', 'mac.com',
+  'msn.com', 'protonmail.com', 'proton.me', 'tutanota.com', 'zoho.com',
+  'aol.com', 'ymail.com', 'mail.com', 'inbox.com', 'gmx.com', 'gmx.net'
+]);
+
+// Extrae el dominio de un correo: "juan@acme.com.co" → "acme.com.co"
+export function dominioDeEmail(email) {
+  const at = String(email || '').lastIndexOf('@');
+  return at >= 0 ? String(email).slice(at + 1).toLowerCase() : '';
 }

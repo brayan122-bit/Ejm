@@ -1,10 +1,25 @@
 // Sesiones con cookie firmada (HttpOnly) y contraseñas con scrypt. Sin dependencias externas.
 import crypto from 'node:crypto';
-import { sql, asegurarEsquema } from './_db.js';
+import { sql, asegurarEsquema, dominioDeEmail } from './_db.js';
 
 const COOKIE = 'sesion';
 const DURACION_S = 8 * 60 * 60; // 8 horas
 const SCRYPT = { N: 16384, r: 8, p: 1 };
+
+// ── Constantes de roles ────────────────────────────────────────────────────────
+// Roles internos: ven todas las empresas.
+export const ROLES_INTERNOS = new Set(['maestro', 'validador']);
+// Roles de empresa: solo ven su propia empresa.
+export const ROLES_EMPRESA = new Set(['empresa_admin', 'empresa_usuario']);
+// Solo el maestro puede gestionar empresas y usuarios globalmente.
+export const SOLO_MAESTRO = 'maestro';
+
+export const esRolInterno = rol => ROLES_INTERNOS.has(rol);
+export const esRolEmpresa = rol => ROLES_EMPRESA.has(rol);
+// Puede validar solicitudes:
+export const puedeValidar = rol => rol === 'maestro' || rol === 'validador';
+// Puede gestionar usuarios de empresa:
+export const puedeGestionarUsuariosEmpresa = rol => rol === 'maestro' || rol === 'empresa_admin';
 
 function secreto() {
   const s = process.env.SESSION_SECRET || '';
@@ -68,22 +83,40 @@ export function cerrarSesion(res) {
   res.setHeader('Set-Cookie', `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
 }
 
-// Devuelve el usuario de la sesión (con su empresa) o null. Revisa en la base que siga activo:
-// desactivar un usuario o cambiarle la contraseña cierra sus sesiones abiertas.
+/**
+ * Devuelve el usuario de la sesión (con datos de su empresa) o null.
+ * Revisa: token válido, usuario activo, estado_acceso activo, empresa activa,
+ * y que el dominio del correo siga perteneciendo a la empresa (si la empresa
+ * tiene dominios registrados).
+ */
 export async function sesionDe(req) {
   const t = leerToken(leerCookie(req));
   if (!t) return null;
   await asegurarEsquema();
-  const [u] = await sql`SELECT u.id, u.email, u.nombre, u.rol, u.empresa_id, u.activo, u.version,
-      e.nombre AS empresa_nombre, e.nit AS empresa_nit, e.modelo AS empresa_modelo,
-      e.productos AS empresa_productos, e.activa AS empresa_activa
-    FROM usuarios u LEFT JOIN empresas e ON e.id = u.empresa_id WHERE u.id = ${t.u}`;
+  const [u] = await sql`
+    SELECT u.id, u.email, u.nombre, u.rol, u.empresa_id, u.activo, u.version,
+           COALESCE(u.estado_acceso, 'activo') AS estado_acceso,
+           e.nombre AS empresa_nombre, e.nit AS empresa_nit, e.modelo AS empresa_modelo,
+           e.productos AS empresa_productos, e.activa AS empresa_activa,
+           COALESCE(e.dominios, '[]'::jsonb) AS empresa_dominios
+      FROM usuarios u LEFT JOIN empresas e ON e.id = u.empresa_id
+     WHERE u.id = ${t.u}`;
   if (!u || !u.activo || u.version !== t.v) return null;
-  if (u.rol === 'empresa' && (!u.empresa_id || !u.empresa_activa)) return null;
+  if (u.estado_acceso !== 'activo') return null;
+  if (esRolEmpresa(u.rol) && (!u.empresa_id || !u.empresa_activa)) return null;
+  // Verificar que el dominio del correo siga perteneciendo a la empresa.
+  // Si la empresa no tiene dominios registrados, se permite cualquier correo.
+  if (esRolEmpresa(u.rol) && Array.isArray(u.empresa_dominios) && u.empresa_dominios.length > 0) {
+    const dom = dominioDeEmail(u.email);
+    if (!u.empresa_dominios.includes(dom)) return null;
+  }
   return u;
 }
 
-// Exige sesión con uno de los roles indicados. Si no la hay, responde y devuelve null.
+/**
+ * Exige sesión con uno de los roles indicados.
+ * Si no la hay o el rol no coincide, responde y devuelve null.
+ */
 export async function exigir(req, res, roles) {
   let u;
   try { u = await sesionDe(req); }
@@ -96,13 +129,22 @@ export async function exigir(req, res, roles) {
   return u;
 }
 
-// Empresa sobre la que actúa la petición: la del usuario de empresa, o la elegida por el equipo interno.
+/**
+ * Empresa sobre la que actúa la petición.
+ * Para usuarios de empresa: SIEMPRE la suya (el empresa_id del request se ignora).
+ * Para roles internos: la elegida por parámetro.
+ */
 export async function empresaObjetivo(u, empresaId) {
-  if (u.rol === 'empresa') {
-    return { id: u.empresa_id, nombre: u.empresa_nombre, nit: u.empresa_nit, modelo: u.empresa_modelo, productos: u.empresa_productos || [] };
+  if (esRolEmpresa(u.rol)) {
+    return {
+      id: u.empresa_id, nombre: u.empresa_nombre, nit: u.empresa_nit,
+      modelo: u.empresa_modelo, productos: u.empresa_productos || [],
+      dominios: u.empresa_dominios || []
+    };
   }
   const id = parseInt(empresaId, 10);
   if (!id) return null;
-  const [e] = await sql`SELECT id, nombre, nit, modelo, productos FROM empresas WHERE id = ${id}`;
+  const [e] = await sql`SELECT id, nombre, nit, modelo, productos,
+      COALESCE(dominios, '[]'::jsonb) AS dominios FROM empresas WHERE id = ${id}`;
   return e || null;
 }

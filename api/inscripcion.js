@@ -23,7 +23,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return res.status(405).json({ error: 'Método no permitido' }); }
   if (!origenValido(req)) return res.status(403).json({ error: 'Origen no permitido' });
   try {
-    const u = await exigir(req, res, ['empresa', 'admin', 'validador']); if (!u) return;
+    const u = await exigir(req, res, ['empresa_admin', 'empresa_usuario', 'maestro', 'validador']); if (!u) return;
     const ip = ipDe(req);
     if (limitador.excedido(ip)) return res.status(429).json({ error: 'Demasiados envíos. Intente más tarde.' });
     limitador.registrar(ip);
@@ -50,17 +50,32 @@ export default async function handler(req, res) {
     const ids = await sql.transaction(filasOk.map(f => {
       const p = producto(f.asistencia_id, f.plan_id);
       const nombre = texto([f.titular_nombres, f.titular_apellidos].filter(Boolean).join(' '), 200);
+      // modelo_aplicado: para empresa mixta (3), tomar el que envía el formulario (1 o 2);
+      // para empresa no mixta, usar siempre el modelo de la empresa (ignorar lo que mande el browser).
+      const modeloEmp = emp.modelo;
+      const modeloAplicado = modeloEmp === 3
+        ? ([1, 2].includes(Number(f.modelo_aplicado)) ? Number(f.modelo_aplicado) : null)
+        : modeloEmp;
+      if (modeloEmp === 3) {
+        if (!modeloAplicado) throw Object.assign(new Error('La empresa mixta requiere enviar el modelo aplicado (1 o 2).'), { publico: true });
+        const esM1 = f.pago_id === 'Nomina';
+        const esM2 = ['Empresa', 'Cofinanciado'].includes(f.pago_id);
+        if ((modeloAplicado === 1 && !esM1) || (modeloAplicado === 2 && !esM2)) {
+          throw Object.assign(new Error(`El modelo aplicado (${modeloAplicado}) no coincide con la forma de pago elegida (${f.pago_id}).`), { publico: true });
+        }
+      }
       return sql`INSERT INTO solicitudes
         (periodo, tipo, empresa_id, enviado_por, id_inscripcion, titular_num_doc, titular_nombre, asistencia_id, asistencia,
-         plan_id, plan, mascota, pago, valor_mensual, valor_empresa, valor_colaborador, personas, datos)
+         plan_id, plan, mascota, pago, valor_mensual, valor_empresa, valor_colaborador, personas, modelo_aplicado, datos)
         VALUES (${periodo}, 'alta', ${emp.id}, ${u.id}, ${idIns}, ${texto(f.titular_num_doc, 20)}, ${nombre},
           ${p.asistencia_id}, ${p.asistencia}, ${p.plan_id}, ${p.plan}, ${texto(f.mascota, 200) || null}, ${f.pago_id},
           ${entero(f.valor_mensual)}, ${entero(f.valor_empresa)}, ${entero(f.valor_colaborador)}, ${personasDe(f)},
-          ${JSON.stringify(f)}::jsonb)
+          ${modeloAplicado}, ${JSON.stringify(f)}::jsonb)
         RETURNING id`;
     }));
     return res.status(200).json({ ok: true, guardadas: filas.length, ids: ids.map(r => r[0].id), periodo });
   } catch (e) {
+    if (e.publico) return res.status(400).json({ error: e.message });
     registrarError('Error guardando inscripción', e);
     return res.status(500).json({ error: 'No se pudo guardar la inscripción.' });
   }
