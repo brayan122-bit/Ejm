@@ -2,9 +2,17 @@
   "name": "inscripcion-bienestar-360",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build-blob-client.js"
+  },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0",
-    "@vercel/blob": "^0.23.4"
+    "@vercel/blob": "^2.8.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
   }
 }
