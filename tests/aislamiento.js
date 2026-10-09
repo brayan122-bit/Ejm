@@ -652,7 +652,7 @@ async function bloque8_archivos() {
   const rT1 = await req('/api/archivo', { method: 'POST', cookie: USR_A_CK, body: { accion: 'token_subida', tipo: 'pdf_inscripcion', id_inscripcion: `INS-A-${RUN}` } });
   ok('Archivo: empresa_A puede obtener token de subida', rT1.status === 200 && rT1.data.clientToken, JSON.stringify(rT1.data));
   
-  const rRegA = await req('/api/archivo', { method: 'POST', cookie: USR_A_CK, body: { accion: 'registrar', id_inscripcion: `INS-A-${RUN}`, tipo: 'pdf_inscripcion', url: `https://test.public.blob.vercel-storage.com/${EMP_A.id}/INS-A-${RUN}_pdf_inscripcion_x` } });
+  const rRegA = await req('/api/archivo', { method: 'POST', cookie: USR_A_CK, body: { accion: 'registrar', id_inscripcion: `INS-A-${RUN}`, tipo: 'pdf_inscripcion', pathname: rT1.data.pathname } });
   ok('Archivo: empresa_A registra archivo', rRegA.status === 200 && rRegA.data.id, JSON.stringify(rRegA.data));
   const idArchivoA = rRegA.data.id;
 
@@ -662,13 +662,9 @@ async function bloque8_archivos() {
   const rGetB = await req(`/api/archivo?id=${idArchivoA}`, { method: 'GET', cookie: ADM_B_CK });
   ok('Archivo: empresa_B NO tiene permiso para archivo de A', rGetB.status === 403, JSON.stringify(rGetB.data));
 
-  // 1.b Registrar con host incorrecto
-  const rRegBadHost = await req('/api/archivo', { method: 'POST', cookie: USR_A_CK, body: { accion: 'registrar', id_inscripcion: `INS-A-${RUN}`, tipo: 'pdf_inscripcion', url: `https://hack.public.blob.vercel-storage.com/${EMP_A.id}/INS-A-${RUN}_pdf_inscripcion_x` } });
-  ok('Archivo: registrar rechaza host de otro store', rRegBadHost.status === 400, rRegBadHost.status.toString());
-
-  // 1.c Registrar con pathname de otra empresa
-  const rRegBadPath = await req('/api/archivo', { method: 'POST', cookie: USR_A_CK, body: { accion: 'registrar', id_inscripcion: `INS-A-${RUN}`, tipo: 'pdf_inscripcion', url: `https://test.public.blob.vercel-storage.com/${EMP_B.id}/INS-A-${RUN}_pdf_inscripcion_x` } });
-  ok('Archivo: registrar rechaza pathname de otra empresa', rRegBadPath.status === 403, rRegBadPath.status.toString());
+  // 1.b Registrar con pathname de otra empresa o inexistente
+  const rRegBadPath = await req('/api/archivo', { method: 'POST', cookie: USR_A_CK, body: { accion: 'registrar', id_inscripcion: `INS-A-${RUN}`, tipo: 'pdf_inscripcion', pathname: `${EMP_B.id}/INS-A-${RUN}_pdf_inscripcion_x` } });
+  ok('Archivo: registrar rechaza pathname de otra empresa o no emitido', rRegBadPath.status === 400, rRegBadPath.status.toString());
 
   // 2. POST /api/archivo token_subida debe rechazar tipos no permitidos
   const rTBad = await req('/api/archivo', { method: 'POST', cookie: USR_A_CK, body: { accion: 'token_subida', tipo: 'txt_hack', id_inscripcion: `INS-A-${RUN}` } });
