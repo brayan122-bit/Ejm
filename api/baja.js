@@ -1,5 +1,5 @@
 // GET ?doc=: asistencias activas de una cédula en la empresa. POST: registra la baja de las elegidas.
-import { sql, asegurarEsquema, ipDe, crearLimitador, leerCuerpo, origenValido, periodoActual, texto, registrarError } from './_db.js';
+import { sql, asegurarEsquema, ipDe, crearLimitador, leerCuerpo, origenValido, periodoActual, texto, registrarError, auditar } from './_db.js';
 import { exigir, empresaObjetivo } from './_auth.js';
 
 const limitador = crearLimitador(60, 10 * 60 * 1000);
@@ -61,6 +61,7 @@ export default async function handler(req, res) {
           ${c.id}, ${c.modelo_aplicado}, ${JSON.stringify(d)}::jsonb)
         RETURNING id`;
     }));
+    await auditar(req, u, 'baja', doc, { cantidad: creadas.length, empresa_id: emp.id, motivo });
     return res.status(200).json({ ok: true, registradas: filas.length, ids: creadas.map(r => r[0].id) });
   } catch (e) {
     registrarError('Error en bajas', e);

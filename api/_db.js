@@ -67,6 +67,80 @@ const MIGRACIONES = [
       sql`UPDATE solicitudes SET modelo_aplicado = CASE WHEN pago = 'Nomina' THEN 1 ELSE 2 END
           WHERE modelo_aplicado IS NULL AND tipo = 'alta'`,
     ]
+  },
+  {
+    id: '006_archivos_pendientes',
+    queries: () => [
+      sql`CREATE TABLE IF NOT EXISTS archivos_pendientes (
+        id SERIAL PRIMARY KEY,
+        pathname TEXT UNIQUE NOT NULL,
+        empresa_id INTEGER NOT NULL REFERENCES empresas(id),
+        usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+        id_inscripcion TEXT NOT NULL,
+        tipo TEXT NOT NULL,
+        expira_en TIMESTAMPTZ NOT NULL,
+        usado BOOLEAN NOT NULL DEFAULT false,
+        pendiente_borrar BOOLEAN NOT NULL DEFAULT false,
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`,
+      sql`ALTER TABLE archivos_pendientes ADD COLUMN IF NOT EXISTS pendiente_borrar BOOLEAN NOT NULL DEFAULT false`,
+      sql`CREATE INDEX IF NOT EXISTS archivos_pend_pathname_idx ON archivos_pendientes (pathname)`,
+      sql`CREATE INDEX IF NOT EXISTS archivos_pend_limpieza_idx ON archivos_pendientes (usado, creado_en, pendiente_borrar)`
+    ]
+  },
+  {
+    id: '007_seguridad_auth',
+    queries: () => [
+      // 1. Intentos de inicio de sesión para rate limiting persistente en BD
+      sql`CREATE TABLE IF NOT EXISTS intentos_login (
+        id BIGSERIAL PRIMARY KEY,
+        email TEXT,
+        ip TEXT NOT NULL,
+        exitoso BOOLEAN NOT NULL DEFAULT false,
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`,
+      sql`CREATE INDEX IF NOT EXISTS intentos_login_ip_idx ON intentos_login (ip, creado_en)`,
+      sql`CREATE INDEX IF NOT EXISTS intentos_login_email_idx ON intentos_login (email, creado_en)`,
+
+      // 2. Control de cambio obligatorio de clave temporal
+      sql`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS debe_cambiar_clave BOOLEAN NOT NULL DEFAULT false`,
+
+      // 3. MFA TOTP y códigos de recuperación
+      sql`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mfa_secreto TEXT`,
+      sql`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mfa_activo BOOLEAN NOT NULL DEFAULT false`,
+      sql`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mfa_recuperacion JSONB NOT NULL DEFAULT '[]'::jsonb`
+    ]
+  },
+  {
+    id: '008_auditoria',
+    queries: () => [
+      // Tabla de auditoría append-only
+      sql`CREATE TABLE IF NOT EXISTS auditoria (
+        id BIGSERIAL PRIMARY KEY,
+        usuario_id INTEGER,
+        rol TEXT,
+        empresa_id INTEGER,
+        accion TEXT NOT NULL,
+        registro_afectado TEXT,
+        detalle JSONB NOT NULL DEFAULT '{}'::jsonb,
+        ip TEXT,
+        fecha TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`,
+      sql`CREATE INDEX IF NOT EXISTS auditoria_fecha_idx ON auditoria (fecha DESC)`,
+      sql`CREATE INDEX IF NOT EXISTS auditoria_usuario_idx ON auditoria (usuario_id, fecha DESC)`,
+      sql`CREATE INDEX IF NOT EXISTS auditoria_empresa_idx ON auditoria (empresa_id, fecha DESC)`,
+      sql`CREATE INDEX IF NOT EXISTS auditoria_accion_idx ON auditoria (accion, fecha DESC)`,
+      sql`CREATE OR REPLACE FUNCTION impedir_modificar_auditoria()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            RAISE EXCEPTION 'La tabla auditoria es inmutable: no se permite UPDATE ni DELETE';
+          END;
+          $$ LANGUAGE plpgsql`,
+      sql`DROP TRIGGER IF EXISTS trg_auditoria_inmutable ON auditoria`,
+      sql`CREATE TRIGGER trg_auditoria_inmutable
+          BEFORE UPDATE OR DELETE ON auditoria
+          FOR EACH ROW EXECUTE FUNCTION impedir_modificar_auditoria()`
+    ]
   }
 ];
 
@@ -189,9 +263,14 @@ export async function asegurarEsquema() {
   esquemaListo = true;
 }
 
-// Mes contable en hora de Colombia: "2026-09".
+// Mes contable en hora de Colombia: si es mayor al día 20, pasa al mes siguiente.
 export function periodoActual(fecha = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit' }).format(fecha);
+  const fStr = fecha.toLocaleString('en-US', { timeZone: 'America/Bogota' });
+  const d = new Date(fStr);
+  if (d.getDate() > 20) d.setMonth(d.getMonth() + 1);
+  const yr = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  return `${yr}-${mo}`;
 }
 export function fechaHoy() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date());
@@ -199,8 +278,12 @@ export function fechaHoy() {
 export const periodoValido = p => typeof p === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(p);
 
 export function ipDe(req) {
+  const real = req.headers['x-real-ip'];
+  if (typeof real === 'string' && real.trim()) return real.trim();
+  const vxf = req.headers['x-vercel-forwarded-for'];
+  if (typeof vxf === 'string' && vxf.trim()) return vxf.split(',')[0].trim();
   const xf = req.headers['x-forwarded-for'];
-  return (Array.isArray(xf) ? xf[0] : (xf || '')).split(',')[0].trim() || req.headers['x-real-ip'] || 'desconocida';
+  return (Array.isArray(xf) ? xf[0] : (xf || '')).split(',')[0].trim() || 'desconocida';
 }
 
 // Límite sencillo por IP (en memoria de cada instancia): frena abusos básicos.
@@ -243,8 +326,102 @@ export const entero = v => {
 };
 
 export function registrarError(donde, e) {
-  // Se registra solo el tipo de error, nunca los datos personales.
-  console.error(donde + ':', e && e.message ? e.message.slice(0, 200) : 'desconocido');
+  // Se registra solo el tipo de error sanitizado, nunca contraseñas, tokens ni datos personales.
+  const msg = (e && e.message ? String(e.message) : 'desconocido')
+    .replace(/Bearer\s+[a-zA-Z0-9_\-\.]+/gi, 'Bearer [REDACTADO]')
+    .replace(/(password|clave|token|hash|secret|authorization)=[^&\s]+/gi, '$1=[REDACTADO]')
+    .slice(0, 200);
+  console.error(donde + ':', msg);
+}
+
+// ── Rate Limiting compartido en base de datos (desactivado por defecto) ─────
+export async function verificarBloqueoLogin(email, ip) {
+  if (process.env.BLOQUEO_INTENTOS_BD !== 'true') return { bloqueado: false };
+  try {
+    const [porIp] = await sql`
+      SELECT count(*)::int AS n FROM intentos_login
+      WHERE ip = ${ip} AND exitoso = false AND creado_en > now() - interval '15 minutes'
+    `;
+    if (porIp && porIp.n >= 8) {
+      return { bloqueado: true, motivo: 'Demasiados intentos fallidos desde su dirección IP. Espere 15 minutos.' };
+    }
+    if (email) {
+      const [porEmail] = await sql`
+        SELECT count(*)::int AS n FROM intentos_login
+        WHERE email = ${email} AND exitoso = false AND creado_en > now() - interval '15 minutes'
+      `;
+      if (porEmail && porEmail.n >= 5) {
+        return { bloqueado: true, motivo: 'Demasiados intentos fallidos para este correo. Espere 15 minutos.' };
+      }
+    }
+    return { bloqueado: false };
+  } catch (err) {
+    // Si la tabla no está creada aún, no bloquear para no interrumpir el servicio
+    return { bloqueado: false };
+  }
+}
+
+export async function registrarIntentoLogin(email, ip, exitoso) {
+  if (process.env.BLOQUEO_INTENTOS_BD !== 'true') return;
+  try {
+    await sql`
+      INSERT INTO intentos_login (email, ip, exitoso)
+      VALUES (${email || null}, ${ip}, ${Boolean(exitoso)})
+    `;
+  } catch (err) {
+    // Falla silenciosa si la migración aún no se ejecuta
+  }
+}
+
+// Lista exacta de nombres de campo sensibles que NUNCA deben persistirse en auditoria
+export const CAMPOS_SENSIBLES_AUDITORIA = new Set([
+  // Credenciales y secretos
+  'clave', 'password', 'token', 'hash', 'secreto', 'temp_token', 'mfa_secreto', 'codigo_recuperacion', 'codigos',
+  // Números de documento, cédula e identificación
+  'doc', 'num_doc', 'num_documento', 'numero_documento', 'documento', 'cedula', 'cedula_ciudadania',
+  'cedula_titular', 'titular_num_doc', 'titular_doc', 'titular_tipo_doc', 'beneficiario_num_doc',
+  'beneficiario_doc', 'beneficiario_tipo_doc', 'tipo_doc', 'nit', 'rut', 'identificacion',
+  // Cuentas bancarias y datos financieros
+  'cuenta', 'cuenta_bancaria', 'num_cuenta', 'numero_cuenta', 'banco', 'tipo_cuenta',
+  'salario', 'sueldo', 'ingreso', 'ingresos', 'tarjeta', 'cvv',
+  // Teléfonos y móviles
+  'telefono', 'tel', 'celular', 'cel', 'movil', 'phone',
+  // Correos de terceros y datos de contacto
+  'correo', 'email', 'correo_tercero', 'email_tercero', 'correo_electronico', 'titular_correo', 'beneficiario_correo',
+  // Archivos y contenido binario
+  'archivo', 'contenido', 'buffer', 'adjunto', 'blob'
+]);
+
+// ── Registro de auditoría append-only ──────────────────────────────────────
+export async function auditar(req, u, accion, registroAfectado = null, detalle = {}) {
+  try {
+    const ip = req ? ipDe(req) : null;
+    const usuarioId = u?.id || null;
+    const rol = u?.rol || (accion.includes('login') ? 'anonimo' : null);
+    const empresaId = u?.empresa_id || null;
+
+    // Sanitizar datos del detalle: NUNCA registrar claves, cédulas, cuentas, teléfonos, correos ni archivos.
+    // Filtrado estricto por lista exacta de nombres de campo (sin coincidencia por subcadena).
+    const detalleLimpio = {};
+    if (detalle && typeof detalle === 'object') {
+      for (const [k, v] of Object.entries(detalle)) {
+        const kNorm = k.toLowerCase().trim();
+        if (!CAMPOS_SENSIBLES_AUDITORIA.has(kNorm)) {
+          detalleLimpio[k] = v;
+        }
+      }
+    }
+
+    await sql`
+      INSERT INTO auditoria (usuario_id, rol, empresa_id, accion, registro_afectado, detalle, ip)
+      VALUES (${usuarioId}, ${rol}, ${empresaId}, ${accion},
+              ${registroAfectado ? String(registroAfectado).slice(0, 200) : null},
+              ${JSON.stringify(detalleLimpio)}::jsonb, ${ip})
+    `;
+  } catch (err) {
+    // La auditoría no interrumpe el flujo principal, pero se reporta en logs sin exponer datos sensibles
+    console.error('Error al registrar auditoría:', err && err.message ? err.message : String(err));
+  }
 }
 
 // Dominios públicos que NO se permiten como dominio corporativo de empresa.
@@ -260,3 +437,4 @@ export function dominioDeEmail(email) {
   const at = String(email || '').lastIndexOf('@');
   return at >= 0 ? String(email).slice(at + 1).toLowerCase() : '';
 }
+

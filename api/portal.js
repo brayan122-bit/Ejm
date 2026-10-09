@@ -1,7 +1,7 @@
 // Tablero de la empresa: conciliación, personas activas, solicitudes.
 // Un usuario de empresa SOLO recibe datos de su propia empresa; el filtro es en el servidor.
 // empresa_admin ve solicitudes de todos los periodos; empresa_usuario solo del actual.
-import { sql, asegurarEsquema, periodoActual, periodoValido, registrarError } from './_db.js';
+import { sql, asegurarEsquema, periodoActual, periodoValido, registrarError, auditar } from './_db.js';
 import { exigir, empresaObjetivo, esRolEmpresa } from './_auth.js';
 import { resumenConciliacion, MODELOS } from './_catalogo.js';
 
@@ -67,6 +67,7 @@ export default async function handler(req, res) {
     const suma = arr => arr.reduce((a, s) => a + (s.valor_mensual || 0), 0);
     const altasP = pend.filter(s => s.tipo === 'alta'), bajasP = pend.filter(s => s.tipo === 'baja');
 
+    await auditar(req, u, 'ver_tablero', String(emp.id), { periodo });
     return res.status(200).json({
       empresa: {
         id: emp.id, nombre: emp.nombre, nit: emp.nit, modelo: emp.modelo,

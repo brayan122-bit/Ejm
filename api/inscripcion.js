@@ -1,5 +1,5 @@
 // Recibe cada inscripción (alta) del formulario y la deja pendiente de validación en "solicitudes".
-import { sql, asegurarEsquema, ipDe, crearLimitador, leerCuerpo, origenValido, periodoActual, texto, entero, registrarError } from './_db.js';
+import { sql, asegurarEsquema, ipDe, crearLimitador, leerCuerpo, origenValido, periodoActual, texto, entero, registrarError, auditar } from './_db.js';
 import { exigir, empresaObjetivo } from './_auth.js';
 import { producto, personasDe, PAGOS } from './_catalogo.js';
 
@@ -73,6 +73,7 @@ export default async function handler(req, res) {
           ${modeloAplicado}, ${JSON.stringify(f)}::jsonb)
         RETURNING id`;
     }));
+    await auditar(req, u, 'alta', idIns, { cantidad: filas.length, empresa_id: emp.id });
     return res.status(200).json({ ok: true, guardadas: filas.length, ids: ids.map(r => r[0].id), periodo });
   } catch (e) {
     if (e.publico) return res.status(400).json({ error: e.message });

@@ -3,17 +3,17 @@
 //  solo maestro:        empresa_guardar, dominios_guardar, usuarios, usuario_guardar,
 //                       usuario_clave, usuario_activar
 //  empresa_admin:       mis_usuarios, mi_usuario_guardar, mi_usuario_clave, mi_usuario_activar
-import { sql, asegurarEsquema, leerCuerpo, origenValido, periodoActual, periodoValido,
+import { sql, asegurarEsquema, leerCuerpo, origenValido, periodoActual, periodoValido, auditar,
          fechaHoy, texto, entero, registrarError, dominioDeEmail, DOMINIOS_PUBLICOS } from './_db.js';
 import { exigir, hashClave, claveTemporal, puedeValidar } from './_auth.js';
 import { alertasDe, PRODUCTOS, CATALOGO } from './_catalogo.js';
 
 // Acciones que requieren exactamente rol 'maestro'
-const SOLO_MAESTRO = new Set(['empresa_guardar', 'dominios_guardar', 'usuarios', 'usuario_guardar', 'usuario_clave', 'usuario_activar']);
+const SOLO_MAESTRO = new Set(['empresa_guardar', 'dominios_guardar', 'usuarios', 'usuario_guardar', 'usuario_clave', 'usuario_activar', 'importar']);
 // Acciones disponibles solo para empresa_admin (gestionan su propia empresa)
 const EMPRESA_ADMIN_OK = new Set(['mis_usuarios', 'mi_usuario_guardar', 'mi_usuario_clave', 'mi_usuario_activar']);
-// Acciones disponibles para maestro + validador
-const INTERNOS_OK = new Set(['solicitudes', 'validar', 'consolidado', 'importar', 'empresas']);
+// Acciones disponibles para maestro + validador (solo lectura y validación operativa)
+const INTERNOS_OK = new Set(['solicitudes', 'validar', 'consolidado', 'empresas']);
 
 const err = (res, n, msg) => res.status(n).json({ error: msg });
 
@@ -107,6 +107,11 @@ const ACCIONES = {
     const q = []; const avisos = [];
     for (const s of sols) {
       if (s.estado === estado) continue;
+      // Segregación de funciones: un validador o maestro no puede aprobar solicitudes enviadas por él mismo
+      if (estado === 'valida' && s.enviado_por && s.enviado_por === u.id) {
+        avisos.push(`Solicitud #${s.id}: segregación de funciones: no puede aprobar una solicitud enviada por usted mismo.`);
+        continue;
+      }
       if (s.estado === 'valida') { // revertir efecto
         if (s.tipo === 'alta') {
           const c = cons.find(c => c.alta_solicitud_id === s.id);
@@ -141,6 +146,16 @@ const ACCIONES = {
                  WHERE id = ${s.id}`);
     }
     if (q.length) await sql.transaction(q);
+    for (const s of sols) {
+      if (s.estado === estado) continue;
+      if (estado === 'valida' && s.enviado_por && s.enviado_por === u.id) continue;
+      await auditar(req, u, estado === 'valida' ? 'aprobar' : (estado === 'invalida' ? 'rechazar' : 'pendiente'), String(s.id), {
+        empresa_id: s.empresa_id, tipo: s.tipo, motivo: estado === 'invalida' ? motivo : null
+      });
+    }
+    if (!q.length && avisos.length) {
+      return res.status(403).json({ error: 'Segregación de funciones: no puede aprobar solicitudes enviadas por usted mismo.', avisos });
+    }
     return res.status(200).json({ ok: true, avisos });
   },
 
@@ -152,13 +167,12 @@ const ACCIONES = {
                     e.nombre AS empresa_nombre, e.nit AS empresa_nit,
                     COALESCE(c.modelo_aplicado, e.modelo) AS modelo_aplicado
                   FROM consolidado c JOIN empresas e ON e.id = c.empresa_id
-                  WHERE c.estado = 'activo' AND c.empresa_id = ${eid}
+                  WHERE c.empresa_id = ${eid}
                   ORDER BY e.nombre, c.titular_nombre LIMIT 50000`
       : await sql`SELECT c.*, to_char(c.fecha_alta,'DD/MM/YYYY') AS fecha_alta_txt,
                     e.nombre AS empresa_nombre, e.nit AS empresa_nit,
                     COALESCE(c.modelo_aplicado, e.modelo) AS modelo_aplicado
                   FROM consolidado c JOIN empresas e ON e.id = c.empresa_id
-                  WHERE c.estado = 'activo'
                   ORDER BY e.nombre, c.titular_nombre LIMIT 50000`;
     return res.status(200).json({ filas });
   },
@@ -221,6 +235,7 @@ const ACCIONES = {
         )
         RETURNING id`));
     const cargadas = r.filter(x => x.length).length;
+    await auditar(req, u, 'importar', String(emp.id), { cargadas, total: validas.length });
     return res.status(200).json({ ok: true, cargadas, omitidas: validas.length - cargadas });
   },
 
@@ -340,11 +355,12 @@ const ACCIONES = {
 
     if (validas.length > 0) {
       await sql.transaction(validas.map(v => 
-        sql`INSERT INTO solicitudes (empresa_id, id_inscripcion, tipo, origen_tipo, titular_num_doc, titular_nombre, asistencia_id, asistencia, plan_id, plan, personas, pago, valor_mensual, modelo_aplicado, datos, estado, recibido_en, periodo)
-            VALUES (${v.empresa_id}, ${v.id_inscripcion}, ${v.tipo}, ${v.origen_tipo}, ${v.titular_num_doc}, ${v.titular_nombre}, ${v.asistencia_id}, ${v.asistencia}, ${v.plan_id}, ${v.plan}, ${v.personas}, ${v.pago}, ${v.valor_mensual}, ${v.modelo_aplicado}, ${JSON.stringify(v.datos)}::jsonb, ${v.estado}, now(), ${periodoActual()})`
+        sql`INSERT INTO solicitudes (empresa_id, id_inscripcion, tipo, origen_tipo, enviado_por, titular_num_doc, titular_nombre, asistencia_id, asistencia, plan_id, plan, personas, pago, valor_mensual, modelo_aplicado, datos, estado, recibido_en, periodo)
+            VALUES (${v.empresa_id}, ${v.id_inscripcion}, ${v.tipo}, ${v.origen_tipo}, ${u.id}, ${v.titular_num_doc}, ${v.titular_nombre}, ${v.asistencia_id}, ${v.asistencia}, ${v.plan_id}, ${v.plan}, ${v.personas}, ${v.pago}, ${v.valor_mensual}, ${v.modelo_aplicado}, ${JSON.stringify(v.datos)}::jsonb, ${v.estado}, now(), ${periodoActual()})`
       ));
     }
     
+    await auditar(req, u, 'importar', String(emp.id), { id_lote: b.id_lote, cargadas: validas.length, omitidas: omitidas_repetidas });
     return res.status(200).json({ ok: true, cargadas: validas.length, omitidas: omitidas_repetidas, errores });
   },
 
@@ -378,6 +394,7 @@ const ACCIONES = {
                     VALUES (${nit}, ${nombre}, ${modelo}, ${JSON.stringify(productos)}::jsonb, ${activa})
                     RETURNING id`;
       if (!e) return err(res, 404, 'Empresa no encontrada.');
+      await auditar(req, u, id ? 'editar_empresa' : 'crear_empresa', String(e.id), { nit, nombre });
       return res.status(200).json({ ok: true, id: e.id });
     } catch (x) {
       if (String(x.message).includes('duplicate') || x.code === '23505') return err(res, 409, 'Ya existe una empresa con ese NIT.');
@@ -406,6 +423,7 @@ const ACCIONES = {
       }
     }
     await sql`UPDATE empresas SET dominios = ${JSON.stringify(dominios)}::jsonb WHERE id = ${id}`;
+    await auditar(req, u, 'editar_empresa', String(id), { dominios });
     return res.status(200).json({ ok: true, dominios });
   },
 
@@ -455,12 +473,14 @@ const ACCIONES = {
               OR activo <> ${activo} OR estado_acceso <> ${estadoAcceso} THEN 1 ELSE 0 END
           WHERE id = ${id} RETURNING id`;
         if (!x) return err(res, 404, 'Usuario no encontrado.');
+        await auditar(req, u, 'editar_usuario', email, { rol, empresa_id: eid });
         return res.status(200).json({ ok: true, id: x.id });
       }
       const clave = claveTemporal();
-      const [x] = await sql`INSERT INTO usuarios (email, nombre, hash, rol, empresa_id, activo, estado_acceso)
-        VALUES (${email}, ${nombre}, ${hashClave(clave)}, ${rol}, ${eid}, ${activo}, ${estadoAcceso})
+      const [x] = await sql`INSERT INTO usuarios (email, nombre, hash, rol, empresa_id, activo, estado_acceso, debe_cambiar_clave)
+        VALUES (${email}, ${nombre}, ${hashClave(clave)}, ${rol}, ${eid}, ${activo}, ${estadoAcceso}, true)
         RETURNING id`;
+      await auditar(req, u, 'crear_usuario', email, { rol, empresa_id: eid });
       return res.status(200).json({ ok: true, id: x.id, clave_temporal: clave });
     } catch (x) {
       if (String(x.message).includes('duplicate') || x.code === '23505') return err(res, 409, 'Ya existe un usuario con ese correo.');
@@ -471,9 +491,10 @@ const ACCIONES = {
   async usuario_clave(b, u, res) {
     const id = empresaId(b.id);
     const clave = claveTemporal();
-    const [x] = id ? await sql`UPDATE usuarios SET hash = ${hashClave(clave)}, version = version + 1
+    const [x] = id ? await sql`UPDATE usuarios SET hash = ${hashClave(clave)}, debe_cambiar_clave = true, version = version + 1
       WHERE id = ${id} RETURNING id` : [];
     if (!x) return err(res, 404, 'Usuario no encontrado.');
+    await auditar(req, u, 'editar_usuario', String(id), { accion: 'resetear_clave' });
     return res.status(200).json({ ok: true, clave_temporal: clave });
   },
 
@@ -488,6 +509,7 @@ const ACCIONES = {
         WHERE id = ${id} AND estado_acceso = 'pendiente'
         RETURNING id`;
     if (!x) return err(res, 404, 'Usuario no encontrado o no está pendiente.');
+    await auditar(req, u, 'editar_usuario', String(id), { estado_acceso: accionActivar ? 'activo' : 'rechazado' });
     return res.status(200).json({ ok: true });
   },
 
@@ -503,7 +525,13 @@ const ACCIONES = {
   async mi_usuario_guardar(b, u, res) {
     const email  = texto(b.email, 200).toLowerCase();
     const nombre = texto(b.nombre, 150);
-    // empresa_admin solo puede crear/editar empresa_usuario
+    // Lista explícita y cerrada de roles que empresa_admin puede gestionar
+    const ROLES_ASIGNABLES_EMPRESA = new Set(['empresa_usuario']);
+    const rolSolicitado = b.rol ? String(b.rol) : 'empresa_usuario';
+
+    if (!ROLES_ASIGNABLES_EMPRESA.has(rolSolicitado)) {
+      return err(res, 403, 'No tiene permiso para asignar ese rol. Solo puede gestionar usuarios con rol empresa_usuario.');
+    }
     const rol = 'empresa_usuario';
     const activo = b.activo !== false;
     const estadoAcceso = ['activo', 'pendiente', 'rechazado'].includes(b.estado_acceso) ? b.estado_acceso : 'activo';
@@ -511,7 +539,7 @@ const ACCIONES = {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return err(res, 400, 'Escriba un correo válido.');
     if (nombre.length < 3) return err(res, 400, 'Escriba el nombre del usuario.');
 
-    // Verificar dominio (igual que en usuario_guardar, a menos que haya excepción)
+    // Verificar dominio corporativo
     if (!b.excepcion_dominio) {
       const [emp] = await sql`SELECT COALESCE(dominios, '[]'::jsonb) AS dominios FROM empresas WHERE id = ${u.empresa_id}`;
       if (emp && Array.isArray(emp.dominios) && emp.dominios.length > 0) {
@@ -522,20 +550,37 @@ const ACCIONES = {
     }
 
     const id = empresaId(b.id);
+    // Un empresa_admin no puede auto-modificarse desde este panel ni alterar su propio rol
+    if (id && id === u.id) {
+      return err(res, 400, 'No puede modificar su propia cuenta de administrador desde este panel.');
+    }
+
     try {
       if (id) {
-        // Verificar que el usuario a editar pertenezca a su empresa
+        // Verificar que el usuario exista, pertenezca a su empresa y sea estrictamente empresa_usuario
+        const [targetUser] = await sql`
+          SELECT id, rol, empresa_id FROM usuarios
+           WHERE id = ${id} AND empresa_id = ${u.empresa_id} LIMIT 1`;
+        if (!targetUser) return err(res, 404, 'Usuario no encontrado en su empresa.');
+        if (targetUser.rol !== 'empresa_usuario') {
+          return err(res, 403, 'No tiene permiso para modificar usuarios con roles superiores o distintos a empresa_usuario.');
+        }
+
+        // El empresa_id NUNCA cambia: se mantiene forzado a u.empresa_id
         const [x] = await sql`UPDATE usuarios SET email = ${email}, nombre = ${nombre},
             activo = ${activo}, estado_acceso = ${estadoAcceso},
             version = version + 1
           WHERE id = ${id} AND empresa_id = ${u.empresa_id} RETURNING id`;
-        if (!x) return err(res, 404, 'Usuario no encontrado en su empresa.');
+        await auditar(req, u, 'editar_usuario', email, { rol: 'empresa_usuario', empresa_id: u.empresa_id });
         return res.status(200).json({ ok: true, id: x.id });
       }
+
+      // Creación de nuevo usuario: rol fijado a 'empresa_usuario' literal y empresa_id forzado a u.empresa_id de la sesión
       const clave = claveTemporal();
-      const [x] = await sql`INSERT INTO usuarios (email, nombre, hash, rol, empresa_id, activo, estado_acceso)
-        VALUES (${email}, ${nombre}, ${hashClave(clave)}, ${rol}, ${u.empresa_id}, ${activo}, ${estadoAcceso})
+      const [x] = await sql`INSERT INTO usuarios (email, nombre, hash, rol, empresa_id, activo, estado_acceso, debe_cambiar_clave)
+        VALUES (${email}, ${nombre}, ${hashClave(clave)}, 'empresa_usuario', ${u.empresa_id}, ${activo}, ${estadoAcceso}, true)
         RETURNING id`;
+      await auditar(req, u, 'crear_usuario', email, { rol: 'empresa_usuario', empresa_id: u.empresa_id });
       return res.status(200).json({ ok: true, id: x.id, clave_temporal: clave });
     } catch (x) {
       if (String(x.message).includes('duplicate') || x.code === '23505') return err(res, 409, 'Ya existe un usuario con ese correo.');
@@ -545,11 +590,23 @@ const ACCIONES = {
 
   async mi_usuario_clave(b, u, res) {
     const id = empresaId(b.id);
-    // Verificar que pertenezca a su empresa
+    if (!id) return err(res, 400, 'ID de usuario requerido.');
+    if (id === u.id) {
+      return err(res, 400, 'Para cambiar su propia contraseña utilice la opción "Cambiar contraseña" en la barra superior.');
+    }
+
+    // Verificar que pertenezca a su empresa y que sea un empresa_usuario
+    const [targetUser] = await sql`
+      SELECT id, rol FROM usuarios WHERE id = ${id} AND empresa_id = ${u.empresa_id} LIMIT 1`;
+    if (!targetUser) return err(res, 404, 'Usuario no encontrado en su empresa.');
+    if (targetUser.rol !== 'empresa_usuario') {
+      return err(res, 403, 'Solo puede restablecer contraseñas de usuarios con rol empresa_usuario.');
+    }
+
     const clave = claveTemporal();
-    const [x] = id ? await sql`UPDATE usuarios SET hash = ${hashClave(clave)}, version = version + 1
-      WHERE id = ${id} AND empresa_id = ${u.empresa_id} RETURNING id` : [];
-    if (!x) return err(res, 404, 'Usuario no encontrado en su empresa.');
+    await sql`UPDATE usuarios SET hash = ${hashClave(clave)}, debe_cambiar_clave = true, version = version + 1
+      WHERE id = ${id} AND empresa_id = ${u.empresa_id}`;
+    await auditar(req, u, 'editar_usuario', String(id), { accion: 'resetear_clave' });
     return res.status(200).json({ ok: true, clave_temporal: clave });
   },
 
@@ -558,12 +615,22 @@ const ACCIONES = {
     const id = empresaId(b.id);
     const aprobar = b.aprobar !== false;
     if (!id) return err(res, 400, 'ID de usuario requerido.');
-    const [x] = await sql`UPDATE usuarios
+    if (id === u.id) return err(res, 400, 'No puede modificar su propio estado de acceso.');
+
+    // Verificar que pertenezca a su empresa y esté pendiente
+    const [targetUser] = await sql`
+      SELECT id, rol FROM usuarios
+       WHERE id = ${id} AND empresa_id = ${u.empresa_id} AND estado_acceso = 'pendiente' LIMIT 1`;
+    if (!targetUser) return err(res, 404, 'Usuario no encontrado o no está pendiente en su empresa.');
+    if (targetUser.rol !== 'empresa_usuario') {
+      return err(res, 403, 'No tiene permiso para activar usuarios con rol diferente a empresa_usuario.');
+    }
+
+    await sql`UPDATE usuarios
         SET activo = ${aprobar}, estado_acceso = ${aprobar ? 'activo' : 'rechazado'},
             version = version + 1
-        WHERE id = ${id} AND empresa_id = ${u.empresa_id} AND estado_acceso = 'pendiente'
-        RETURNING id`;
-    if (!x) return err(res, 404, 'Usuario no encontrado o no está pendiente en su empresa.');
+        WHERE id = ${id} AND empresa_id = ${u.empresa_id}`;
+    await auditar(req, u, 'editar_usuario', String(id), { estado_acceso: aprobar ? 'activo' : 'rechazado' });
     return res.status(200).json({ ok: true });
   }
 };
