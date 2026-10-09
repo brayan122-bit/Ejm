@@ -41,7 +41,7 @@ export default async function handler(req, res) {
     }
 
     const fn = ACCIONES[accion];
-    return await fn(b, u, res);
+    return await fn(b, u, res, req);
   } catch (e) {
     if (e.publico) return err(res, 400, e.message);
     registrarError('Error en administración', e);
@@ -90,7 +90,7 @@ const ACCIONES = {
 
   // ── Marcar solicitudes como válidas / inválidas / pendientes ──────────────
   // Solo maestro y validador pueden validar (verificado arriba en el handler).
-  async validar(b, u, res) {
+  async validar(b, u, res, req) {
     if (!puedeValidar(u.rol)) return err(res, 403, 'Solo el maestro o validador pueden validar solicitudes.');
     const estado = b.estado;
     if (!['valida', 'invalida', 'pendiente'].includes(estado)) return err(res, 400, 'Estado inválido.');
@@ -178,7 +178,7 @@ const ACCIONES = {
   },
 
   // ── Importar consolidado inicial desde CSV/Excel ──────────────────────────
-  async importar(b, u, res) {
+  async importar(b, u, res, req) {
     const eid = empresaId(b.empresa_id);
     const [emp] = eid ? await sql`SELECT id, modelo FROM empresas WHERE id = ${eid}` : [];
     if (!emp) return err(res, 400, 'Elija la empresa a la que pertenece el archivo.');
@@ -240,7 +240,7 @@ const ACCIONES = {
   },
 
   // ── Altas Masivas ───────────────────────────────────────────────────────────
-  async altas_masivas(b, u, res) {
+  async altas_masivas(b, u, res, req) {
     if (!['maestro', 'empresa_admin'].includes(u.rol)) return res.status(403).json({ error: 'No autorizado' });
     const empId = u.rol === 'empresa_admin' ? u.empresa_id : parseInt(b.empresa_id);
     if (!empId) return res.status(400).json({ error: 'Falta empresa_id' });
@@ -375,7 +375,7 @@ const ACCIONES = {
     return res.status(200).json({ filas, productos: PRODUCTOS });
   },
 
-  async empresa_guardar(b, u, res) {
+  async empresa_guardar(b, u, res, req) {
     const nit    = texto(b.nit, 20).replace(/[^0-9-]/g, '');
     const nombre = texto(b.nombre, 150);
     const modelo = [1, 2, 3].includes(Number(b.modelo)) ? Number(b.modelo) : 1;
@@ -403,7 +403,7 @@ const ACCIONES = {
   },
 
   // ── Dominios corporativos de una empresa ─────────────────────────────────
-  async dominios_guardar(b, u, res) {
+  async dominios_guardar(b, u, res, req) {
     const id = empresaId(b.empresa_id);
     if (!id) return err(res, 400, 'Elija la empresa.');
     const rawDominios = Array.isArray(b.dominios) ? b.dominios : [];
@@ -437,7 +437,7 @@ const ACCIONES = {
     return res.status(200).json({ filas });
   },
 
-  async usuario_guardar(b, u, res) {
+  async usuario_guardar(b, u, res, req) {
     const email  = texto(b.email, 200).toLowerCase();
     const nombre = texto(b.nombre, 150);
     const ROLES_VALIDOS = ['maestro', 'validador', 'empresa_admin', 'empresa_usuario'];
@@ -488,7 +488,7 @@ const ACCIONES = {
     }
   },
 
-  async usuario_clave(b, u, res) {
+  async usuario_clave(b, u, res, req) {
     const id = empresaId(b.id);
     const clave = claveTemporal();
     const [x] = id ? await sql`UPDATE usuarios SET hash = ${hashClave(clave)}, debe_cambiar_clave = true, version = version + 1
@@ -499,7 +499,7 @@ const ACCIONES = {
   },
 
   // Activar / rechazar un usuario pendiente de aprobación (global, maestro)
-  async usuario_activar(b, u, res) {
+  async usuario_activar(b, u, res, req) {
     const id = empresaId(b.id);
     const accionActivar = b.aprobar !== false; // true = aprobar, false = rechazar
     if (!id) return err(res, 400, 'ID de usuario requerido.');
@@ -522,7 +522,7 @@ const ACCIONES = {
     return res.status(200).json({ filas });
   },
 
-  async mi_usuario_guardar(b, u, res) {
+  async mi_usuario_guardar(b, u, res, req) {
     const email  = texto(b.email, 200).toLowerCase();
     const nombre = texto(b.nombre, 150);
     // Lista explícita y cerrada de roles que empresa_admin puede gestionar
@@ -588,7 +588,7 @@ const ACCIONES = {
     }
   },
 
-  async mi_usuario_clave(b, u, res) {
+  async mi_usuario_clave(b, u, res, req) {
     const id = empresaId(b.id);
     if (!id) return err(res, 400, 'ID de usuario requerido.');
     if (id === u.id) {
@@ -611,7 +611,7 @@ const ACCIONES = {
   },
 
   // empresa_admin activa o rechaza solicitudes de acceso de su propia empresa
-  async mi_usuario_activar(b, u, res) {
+  async mi_usuario_activar(b, u, res, req) {
     const id = empresaId(b.id);
     const aprobar = b.aprobar !== false;
     if (!id) return err(res, 400, 'ID de usuario requerido.');
