@@ -805,19 +805,12 @@ Para realizar una validación pre-producción completamente segura sin arriesgar
 
 ```mermaid
 flowchart TD
-    P0[Paso Previo: Activar Deployment Protection] --> A[1. Crear Rama en Neon]
-    A --> B[2. Configurar Variables en Vercel Preview]
+    A[1. Crear Rama en Neon] --> B[2. Configurar Variables en Vercel Preview]
     B --> C[3. Crear Usuario Maestro en Rama de Neon]
     C --> D[4. Desplegar en Entorno Preview de Vercel]
     D --> E[5. Revisar Log del Build en Vercel]
-    E --> F[6. Ejecutar Plan de Pruebas en Preview]
-    F --> G[7. Promoción a Producción y Eliminación de ADMIN_PASSWORD]
+    E --> F[6. Ejecutar Plan de Pruebas de Seguridad]
 ```
-
-### Paso Previo: Activar Deployment Protection en Vercel
-1. En el panel de Vercel del proyecto Bienestar 360, diríjase a **Settings** > **Deployment Protection**.
-2. Active la protección para los despliegues de Preview (opción **Vercel Authentication** si su equipo cuenta con cuentas Vercel, o **Password Protection** configurando una contraseña compartida de acceso).
-3. **Propósito:** Garantizar que las URLs generadas para el entorno de preview (`*.vercel.app`) no queden accesibles a visitantes no autorizados ni expuestas a indexación por motores de búsqueda mientras se realizan las pruebas con datos de prueba.
 
 ### Paso 1: Crear Rama en Neon
 1. Ingrese a la consola web de Neon ([console.neon.tech](https://console.neon.tech)) y seleccione el proyecto de Bienestar 360.
@@ -825,20 +818,17 @@ flowchart TD
 3. Asigne el nombre `preview-fase-seguridad` teniendo como origen la rama `main`.
 4. Copie la cadena de conexión completa (Connection String) generada para esta rama (ej. `postgres://usuario:clave@ep-xyz-preview.us-east-2.aws.neon.tech/neondb?sslmode=require`).
 
-### Paso 2: Configurar Variables de Entorno en Vercel (Preview)
+### Paso 2: Configurar Variables de Entorno Nuevas en Vercel (Preview)
 1. Ingrese al panel de Vercel y diríjase a **Settings** > **Environment Variables**.
-2. **Asegurar variables existentes en Preview:**
-   - Verifique que las variables de infraestructura ya existentes (`SESSION_SECRET`, `BLOB_READ_WRITE_TOKEN` y `BLOB_HOST`) tengan marcada la casilla **Preview** además de *Production*, para que las funciones serverless del despliegue de preview puedan firmar cookies y acceder al almacén de archivos.
-3. **Asegurar la base de datos de producción:**
-   - Verifique la variable existente `DATABASE_URL` y confirme que esté asignada **únicamente a Production**.
-4. **Crear las variables específicas para el entorno Preview:**
+2. Verifique la variable existente `DATABASE_URL` y asegúrese de que esté asignada **únicamente a Production**.
+3. Cree las variables específicas para el entorno **Preview**:
    - `DATABASE_URL`: Connection string de la rama de Neon creada en el Paso 1 (marcar **solo Preview**).
    - `MFA_CLAVE_CIFRADO`: Generada con `openssl rand -hex 32` (marcar **Preview y Production**).
    - `CRON_SECRET`: Generada con `openssl rand -hex 24` (marcar **Preview y Production**).
    - `MFA_OBLIGATORIO`: Iniciar en `false` (marcar **Preview**).
    - `CAMBIO_CLAVE_OBLIGATORIO`: Iniciar en `false` (marcar **Preview**).
    - `BLOQUEO_INTENTOS_BD`: Iniciar en `false` (marcar **Preview**).
-   *(Nota: No elimine `ADMIN_PASSWORD` en este paso; se conservará intacta hasta el paso final después de la migración a producción).*
+4. Elimine la variable obsoleta `ADMIN_PASSWORD` si aún existe en el panel.
 
 ### Paso 3: Crear el Usuario Maestro con `seed_maestro.py` en la Rama de Neon
 1. En su máquina local, ejecute el generador criptográfico en Python:
@@ -866,7 +856,7 @@ flowchart TD
    - Que no existan advertencias de salida ni errores sintácticos.
    - Que el estado final del despliegue sea **Ready**.
 
-### Paso 6: Ejecutar el Plan de Pruebas en Preview
+### Paso 6: Ejecutar el Plan de Pruebas
 1. **Verificación de Migraciones Automáticas:**
    - Abra la URL del preview en `/login`. Al realizar la primera petición, verifique en la consola de Neon que la tabla `_migraciones` contenga los 8 pasos aplicados y que las tablas `auditoria` e `intentos_login` existan con sus triggers.
 2. **Autenticación Maestra y Políticas:**
@@ -877,17 +867,6 @@ flowchart TD
    - Cierre sesión e ingrese nuevamente para verificar la solicitud de TOTP.
 4. **Pruebas de Aislamiento y Roles:**
    - Ejecute las pruebas de acceso cruzado entre empresas (IDOR) y verifique la inmutabilidad de la tabla `auditoria` ejecutando un intento de `DELETE FROM auditoria` en Neon para constatar el bloqueo por trigger.
-
-### Paso 7: Promoción a Producción y Eliminación Definitiva de `ADMIN_PASSWORD`
-Una vez superado y validado satisfactoriamente el plan de pruebas en el entorno de Preview:
-1. **Unir cambios a producción:** Realice el *Merge* del Pull Request hacia la rama `main`. Vercel desplegará automáticamente la nueva versión en el dominio de producción.
-2. **Crear o actualizar el usuario maestro en producción:**
-   - Ejecute en su máquina local `python scripts/seed_maestro.py` con las credenciales maestras definitivas para producción.
-   - En la consola de Neon, abra el **SQL Editor**, asegúrese de que esté seleccionada la rama **`main`** (base de producción), pegue el SQL `INSERT ... ON CONFLICT` generado y ejecútelo.
-3. **Comprobar inicio de sesión en producción:**
-   - Ingrese al sitio de producción (`/login`) con las credenciales del usuario maestro recién sembrado y confirme que el acceso sea 100% exitoso.
-4. **Eliminación final de la variable:**
-   - **Solo después** de confirmar el ingreso exitoso del usuario maestro en producción, diríjase a **Settings** > **Environment Variables** en Vercel y elimine definitivamente la variable obsoleta `ADMIN_PASSWORD`. Con esto se erradica por completo cualquier remanente del acceso en texto plano.
 
 ---
 *Informe actualizado por el Asistente de Seguridad Antigravity.*

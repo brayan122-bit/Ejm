@@ -6,7 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build:vendor": "node scripts/build-blob-client.js"
+    "build": "node scripts/build-blob-client.js"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0",
