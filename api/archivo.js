@@ -1,6 +1,6 @@
 import { sql, asegurarEsquema, origenValido, leerCuerpo, auditar } from './_db.js';
 import { exigir, esRolEmpresa } from './_auth.js';
-import { generateClientTokenFromReadWriteToken } from '@vercel/blob/client';
+import { handleUpload } from '@vercel/blob/client';
 import { del } from '@vercel/blob';
 import crypto from 'crypto';
 
@@ -103,7 +103,61 @@ export default async function handler(req, res) {
       const b = leerCuerpo(req) || {};
       const accion = String(b.accion || '');
       
-      // ── Acción 1: Emitir token temporal de subida ─────────────────────────
+      // ── Subida cliente directa con handleUpload (@vercel/blob/client) ─────
+      if (b.type === 'blob.generate-client-token' || b.type === 'blob.upload-completed') {
+        const jsonResponse = await handleUpload({
+          body: b,
+          request: req,
+          onBeforeGenerateToken: async (pathname, clientPayload) => {
+            let pData = {};
+            try { pData = JSON.parse(clientPayload || '{}'); } catch {}
+            const tipo = pData.tipo || (pathname.includes('pdf_inscripcion') ? 'pdf_inscripcion' : 'soporte_nomina');
+            const id_inscripcion = pData.id_inscripcion || (pathname.split('/')[1] ? pathname.split('/')[1].split('_')[0] : 'N/A');
+
+            await asegurarEsquema();
+            let targetEmpresaId = u.empresa_id;
+            if (!esRolEmpresa(u.rol)) {
+              if (pData.empresa_id) {
+                const [emp] = await sql`SELECT id FROM empresas WHERE id = ${pData.empresa_id}`;
+                if (emp) targetEmpresaId = emp.id;
+              }
+            }
+
+            let allowedContentTypes;
+            let maximumSizeInBytes;
+            if (tipo === 'pdf_inscripcion') {
+              allowedContentTypes = ['application/pdf'];
+              maximumSizeInBytes = 3 * 1024 * 1024; // 3 MB
+            } else {
+              const tiposSoporte = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+              if (pData.contentType && !tiposSoporte.includes(pData.contentType)) {
+                tiposSoporte.push(pData.contentType);
+              }
+              allowedContentTypes = tiposSoporte;
+              maximumSizeInBytes = 4 * 1024 * 1024; // 4 MB
+            }
+
+            const validUntil = Date.now() + 30 * 60 * 1000; // 30 minutos en milisegundos
+
+            const cleanPathname = pathname.replace(/^\//, '').trim();
+            await sql`INSERT INTO archivos_pendientes (pathname, empresa_id, usuario_id, id_inscripcion, tipo, expira_en)
+                      VALUES (${cleanPathname}, ${targetEmpresaId}, ${u.id}, ${id_inscripcion}, ${tipo}, now() + interval '30 minutes')
+                      ON CONFLICT (pathname) DO NOTHING`;
+
+            const tokenPayload = JSON.stringify({ empresa_id: targetEmpresaId, tipo, id_inscripcion });
+
+            return {
+              allowedContentTypes,
+              maximumSizeInBytes,
+              validUntil,
+              tokenPayload
+            };
+          }
+        });
+        return res.status(200).json(jsonResponse);
+      }
+
+      // ── Acción 1: Emitir token temporal de subida (compatibilidad) ────────
       if (accion === 'token_subida') {
         const { tipo, id_inscripcion } = b;
         if (!['pdf_inscripcion', 'soporte_nomina'].includes(tipo)) {
@@ -132,36 +186,46 @@ export default async function handler(req, res) {
         
         let allowedContentTypes;
         let maximumSizeInBytes;
+        const ext = tipo === 'pdf_inscripcion' ? 'pdf' : 'pdf';
         if (tipo === 'pdf_inscripcion') {
           allowedContentTypes = ['application/pdf'];
           maximumSizeInBytes = 3 * 1024 * 1024; // 3 MB
         } else {
-          allowedContentTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+          allowedContentTypes = ['application/pdf', 'image/jpeg', 'image/png'];
           maximumSizeInBytes = 4 * 1024 * 1024; // 4 MB
         }
         
-        // Generar ruta única en el servidor
+        // Generar ruta única en el servidor con extensión
         const r = crypto.randomBytes(12).toString('hex');
-        const pathname = `${targetEmpresaId}/${id_inscripcion}_${tipo}_${r}`;
+        const pathname = `${targetEmpresaId}/${id_inscripcion}_${tipo}_${r}.${ext}`;
         
         // Registrar la ruta emitida en BD con expiración de 30 minutos
         await sql`INSERT INTO archivos_pendientes (pathname, empresa_id, usuario_id, id_inscripcion, tipo, expira_en)
-                  VALUES (${pathname}, ${targetEmpresaId}, ${u.id}, ${id_inscripcion}, ${tipo}, now() + interval '30 minutes')`;
+                  VALUES (${pathname}, ${targetEmpresaId}, ${u.id}, ${id_inscripcion}, ${tipo}, now() + interval '30 minutes')
+                  ON CONFLICT (pathname) DO NOTHING`;
         
-        // Validez del token en milisegundos: 30 minutos a partir de este instante
         const validUntil = Date.now() + 30 * 60 * 1000;
+        const tokenPayload = JSON.stringify({ empresa_id: targetEmpresaId, tipo, id_inscripcion });
 
-        const clientToken = await generateClientTokenFromReadWriteToken({
-          token: process.env.BLOB_READ_WRITE_TOKEN,
-          pathname,
-          maximumSizeInBytes,
-          allowedContentTypes,
-          validContentTypes: allowedContentTypes,
-          validUntil,
-          clientPayload: JSON.stringify({ empresa_id: targetEmpresaId, tipo, id_inscripcion })
+        const jsonResponse = await handleUpload({
+          body: {
+            type: 'blob.generate-client-token',
+            payload: {
+              pathname,
+              clientPayload: tokenPayload,
+              multipart: false
+            }
+          },
+          request: req,
+          onBeforeGenerateToken: async () => ({
+            allowedContentTypes,
+            maximumSizeInBytes,
+            validUntil,
+            tokenPayload
+          })
         });
         
-        return res.status(200).json({ type: 'upload_token', clientToken, pathname });
+        return res.status(200).json({ type: 'upload_token', clientToken: jsonResponse.clientToken, pathname });
       }
       
       // ── Acción 2: Confirmar y registrar archivo subido ─────────────────────
@@ -251,6 +315,10 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Método no permitido' });
   } catch (e) {
     if (e.publico) return res.status(e.status || 400).json({ error: e.message });
+    if (e.name === 'BlobError') {
+      console.error('BlobError en /api/archivo:', e.message);
+      return res.status(400).json({ error: e.message });
+    }
     console.error('Error en /api/archivo:', e);
     return res.status(500).json({ error: 'Error procesando la solicitud del archivo' });
   }
