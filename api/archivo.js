@@ -130,13 +130,13 @@ export default async function handler(req, res) {
           }
         }
         
-        let validContentTypes;
+        let allowedContentTypes;
         let maximumSizeInBytes;
         if (tipo === 'pdf_inscripcion') {
-          validContentTypes = ['application/pdf'];
+          allowedContentTypes = ['application/pdf'];
           maximumSizeInBytes = 3 * 1024 * 1024; // 3 MB
         } else {
-          validContentTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+          allowedContentTypes = ['image/jpeg', 'image/png', 'application/pdf'];
           maximumSizeInBytes = 4 * 1024 * 1024; // 4 MB
         }
         
@@ -144,15 +144,20 @@ export default async function handler(req, res) {
         const r = crypto.randomBytes(12).toString('hex');
         const pathname = `${targetEmpresaId}/${id_inscripcion}_${tipo}_${r}`;
         
-        // Registrar la ruta emitida en BD con expiración de 15 minutos
+        // Registrar la ruta emitida en BD con expiración de 30 minutos
         await sql`INSERT INTO archivos_pendientes (pathname, empresa_id, usuario_id, id_inscripcion, tipo, expira_en)
-                  VALUES (${pathname}, ${targetEmpresaId}, ${u.id}, ${id_inscripcion}, ${tipo}, now() + interval '15 minutes')`;
+                  VALUES (${pathname}, ${targetEmpresaId}, ${u.id}, ${id_inscripcion}, ${tipo}, now() + interval '30 minutes')`;
         
+        // Validez del token en milisegundos: 30 minutos a partir de este instante
+        const validUntil = Date.now() + 30 * 60 * 1000;
+
         const clientToken = await generateClientTokenFromReadWriteToken({
           token: process.env.BLOB_READ_WRITE_TOKEN,
           pathname,
           maximumSizeInBytes,
-          validContentTypes,
+          allowedContentTypes,
+          validContentTypes: allowedContentTypes,
+          validUntil,
           clientPayload: JSON.stringify({ empresa_id: targetEmpresaId, tipo, id_inscripcion })
         });
         
