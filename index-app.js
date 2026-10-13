@@ -1037,7 +1037,8 @@ async function enviarInscripcion(){
         const empId = S.convenio && S.convenio.empresa_id;
         const rT = await fetch(CONFIG.ENDPOINT_URL.replace('/inscripcion','/archivo'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
           body: JSON.stringify({ accion: 'token_subida', tipo, id_inscripcion: generado.id_inscripcion, empresa_id: empId })
         });
         const tData = await rT.json();
