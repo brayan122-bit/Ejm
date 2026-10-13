@@ -1,4 +1,3 @@
-import esprima
 import glob
 import os
 
