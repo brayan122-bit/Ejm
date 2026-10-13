@@ -1031,96 +1031,86 @@ async function enviarInscripcion(){
   generado.envio = 'enviando'; generado.error = ''; render();
   
   try {
+    // 1. Guardar la inscripción en la base de datos PRIMERO para que exista antes de subir archivos
+    if (!generado.enviadaBD) {
+      const r = await fetch(CONFIG.ENDPOINT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ empresa_id: S.convenio.empresa_id, filas: generado.filas })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 401) {
+        generado.envio = 'error';
+        generado.error = 'Su sesión terminó: ingrese de nuevo en otra pestaña y reintente.';
+        $('#btnNext').disabled = false;
+        render();
+        return;
+      } else if (!r.ok) {
+        generado.envio = 'error';
+        generado.error = d.error || 'Error del servidor al guardar la inscripción.';
+        $('#btnNext').disabled = false;
+        render();
+        return;
+      }
+      generado.enviadaBD = true;
+    }
+
+    // 2. Subida de archivos al servidor (/api/archivo) usando fetch con FormData
     try {
-      const { upload } = await import('/vendor/vercel-blob-client.js');
       const subeArchivo = async (file, tipo) => {
         const empId = S.convenio && S.convenio.empresa_id;
+        const fd = new FormData();
+        fd.append('accion', 'subir');
+        fd.append('tipo', tipo);
+        fd.append('id_inscripcion', generado.id_inscripcion);
+        if (empId) fd.append('empresa_id', String(empId));
+        fd.append('archivo', file, file.name || `${tipo}.pdf`);
 
-        // Determinar extensión y contentType real del archivo
-        let ext = 'pdf';
-        let contentType = 'application/pdf';
-        if (tipo === 'pdf_inscripcion') {
-          ext = 'pdf';
-          contentType = 'application/pdf';
-        } else {
-          if (file.type === 'image/jpeg' || /\.jpe?g$/i.test(file.name || '')) {
-            ext = 'jpg';
-            contentType = 'image/jpeg';
-          } else if (file.type === 'image/png' || /\.png$/i.test(file.name || '')) {
-            ext = 'png';
-            contentType = 'image/png';
-          } else if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '')) {
-            ext = 'pdf';
-            contentType = 'application/pdf';
-          } else {
-            contentType = file.type || 'application/pdf';
-            ext = file.name && file.name.includes('.') ? file.name.split('.').pop().toLowerCase() : 'pdf';
-          }
-        }
-
-        const r = Math.random().toString(16).slice(2, 10);
-        const pathname = `${empId}/${generado.id_inscripcion}_${tipo}_${r}.${ext}`;
-
+        let res;
         try {
-          const res = await upload(pathname, file, {
-            access: 'public',
-            handleUploadUrl: '/api/archivo',
-            contentType,
-            clientPayload: JSON.stringify({ tipo, id_inscripcion: generado.id_inscripcion, empresa_id: empId, contentType })
-          });
-
-          const rReg = await fetch(CONFIG.ENDPOINT_URL.replace('/inscripcion','/archivo'), {
+          res = await fetch('/api/archivo', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              accion: 'registrar',
-              tipo,
-              id_inscripcion: generado.id_inscripcion,
-              empresa_id: empId,
-              pathname: res.pathname || pathname
-            })
+            body: fd
           });
-          const regData = await rReg.json().catch(() => ({}));
-          if (!rReg.ok) throw new Error(regData.error || 'Error al registrar archivo');
-        } catch(err) {
-          console.error(`Error al subir ${tipo} (${file.name}): ${err.message} | file.type: "${file.type}" | file.size: ${file.size} bytes`);
-          throw new Error(`Error al subir ${tipo} (${file.name}): ${err.message} | file.type: "${file.type}" | file.size: ${file.size} bytes`);
+        } catch (netErr) {
+          throw new Error(`Fallo de conexión al enviar ${tipo}: ${netErr.message}`);
         }
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || `Error ${res.status} al subir ${tipo}`);
+        }
+        return data;
       };
 
       if (!generado.pdfSubido) {
         const filePdf = new File([generado.bytes], generado.nombre, { type: 'application/pdf' });
-        await subeArchivo(filePdf, 'pdf_inscripcion');
+        const resPdf = await subeArchivo(filePdf, 'pdf_inscripcion');
+        generado.pdfId = resPdf.id;
+        generado.pdfUrl = resPdf.url;
         generado.pdfSubido = true;
       }
       if (generado.soporte && !generado.soporteSubido) {
-        await subeArchivo(generado.soporte, 'soporte_nomina');
+        const resSoporte = await subeArchivo(generado.soporte, 'soporte_nomina');
+        generado.soporteId = resSoporte.id;
+        generado.soporteUrl = resSoporte.url;
         generado.soporteSubido = true;
       }
       generado.errorUpload = false;
-    } catch(e) {
+    } catch (e) {
       console.error('Falla al subir archivos:', e.message);
       generado.error = e.message;
       generado.errorUpload = true;
     }
 
-    if (!generado.enviadaBD) {
-      const r = await fetch(CONFIG.ENDPOINT_URL, { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ empresa_id:S.convenio.empresa_id, filas:generado.filas }) });
-      const d = await r.json().catch(()=>({}));
-      if(r.status===401){ generado.envio='error'; generado.error='Su sesión terminó: ingrese de nuevo en otra pestaña y reintente.'; }
-      else if(!r.ok) { generado.envio='error'; generado.error = d.error || 'Error del servidor.'; }
-      else { 
-        generado.enviadaBD = true;
-        generado.envio = generado.errorUpload ? 'error_pdf' : 'ok';
-      }
-    } else {
-      generado.envio = generado.errorUpload ? 'error_pdf' : 'ok';
-    }
-    
-    if (generado.envio==='ok') toast('Inscripción enviada y archivos guardados.');
-  } catch(e){ generado.envio='error'; generado.error='Sin conexión.'; }
-  $('#btnNext').disabled = false; render();
+    generado.envio = generado.errorUpload ? 'error_pdf' : 'ok';
+    if (generado.envio === 'ok') toast('Inscripción enviada y archivos guardados.');
+  } catch (e) {
+    generado.envio = 'error';
+    generado.error = e.message || 'Sin conexión.';
+  }
+  $('#btnNext').disabled = false;
+  render();
 }
 async function generar(){
   const r = validar('pago'); if(r.E.length){ ir(STEPS.findIndex(s=>s.id==='pago')); setTimeout(()=>pintarValidacion(r), 50); return; }
