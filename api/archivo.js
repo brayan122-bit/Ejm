@@ -1,38 +1,136 @@
-import { sql, asegurarEsquema, origenValido, leerCuerpo, auditar } from './_db.js';
+import { sql, asegurarEsquema, origenValido, leerCuerpo, auditar, ipDe, crearLimitador } from './_db.js';
 import { exigir, esRolEmpresa } from './_auth.js';
 import { handleUpload } from '@vercel/blob/client';
-import { del } from '@vercel/blob';
+import { put, del } from '@vercel/blob';
 import crypto from 'crypto';
 
 // Roles explícitamente autorizados para operaciones de archivos (denegar por defecto)
 const ROLES_PERMITIDOS_ARCHIVO = new Set(['maestro', 'validador', 'empresa_admin', 'empresa_usuario']);
 
-// Obtiene el host obligatorio y exacto del almacenamiento
-function obtenerBlobHost() {
-  const host = (process.env.BLOB_HOST || '').trim().toLowerCase();
-  if (!host) {
-    throw Object.assign(new Error('Configuración incompleta: falta la variable BLOB_HOST en el servidor.'), { publico: true });
+// Límite de peticiones de subida por IP: máx 30 peticiones por minuto
+const limitadorSubida = crearLimitador(30, 60 * 1000);
+
+// Valida si el host pertenece a la configuración o al dominio vercel-storage
+function hostEsValido(hostRecibido) {
+  const h = (hostRecibido || '').toLowerCase();
+  const hostConfig = (process.env.BLOB_HOST || '').trim().toLowerCase();
+  if (hostConfig) {
+    if (h === hostConfig) return true;
+    if (h === hostConfig.replace('.public.', '.private.')) return true;
+    if (h === hostConfig.replace('.private.', '.public.')) return true;
   }
-  return host;
+  if (h.endsWith('.blob.vercel-storage.com') || h === 'blob.vercel-storage.com') {
+    return true;
+  }
+  return false;
 }
 
 // Validación estricta por contenido real (Magic Bytes)
 function detectarTipoContenido(buffer) {
-  if (!buffer || buffer.length < 8) return null;
+  if (!buffer || buffer.length < 4) return null;
   // PDF: %PDF (0x25 0x50 0x44 0x46)
   if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
     return 'application/pdf';
   }
   // JPEG: FF D8 FF
-  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+  if (buffer.length >= 3 && buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
     return 'image/jpeg';
   }
   // PNG: 89 50 4E 47 0D 0A 1A 0A
-  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47 &&
+  if (buffer.length >= 8 &&
+      buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47 &&
       buffer[4] === 0x0D && buffer[5] === 0x0A && buffer[6] === 0x1A && buffer[7] === 0x0A) {
     return 'image/png';
   }
   return null;
+}
+
+// Lee el buffer de la petición soportando streams no leídos y buffers preprocesados
+async function leerBufferRequest(req) {
+  if (Buffer.isBuffer(req.body)) return req.body;
+  if (typeof req.body === 'string') return Buffer.from(req.body);
+  const chunks = [];
+  try {
+    for await (const chunk of req) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+  } catch (err) {
+    console.error('Error leyendo chunks del stream HTTP:', err);
+  }
+  return chunks.length > 0 ? Buffer.concat(chunks) : null;
+}
+
+// Parsea la solicitud soportando multipart/form-data, application/json y binario directo
+async function parsearSolicitud(req) {
+  const cType = (req.headers['content-type'] || '').toLowerCase();
+
+  if (cType.includes('multipart/form-data')) {
+    const rawBuffer = await leerBufferRequest(req);
+    if (!rawBuffer || rawBuffer.length === 0) {
+      return { accion: 'subir', fileBuffer: null };
+    }
+    const dummyRes = new Response(rawBuffer, {
+      headers: { 'content-type': req.headers['content-type'] }
+    });
+    const formData = await dummyRes.formData();
+    const accion = String(formData.get('accion') || 'subir');
+    const tipo = String(formData.get('tipo') || '');
+    const id_inscripcion = String(formData.get('id_inscripcion') || '');
+    const empresa_id = formData.get('empresa_id') ? Number(formData.get('empresa_id')) : null;
+    const fileEntry = formData.get('archivo') || formData.get('file');
+    let fileBuffer = null;
+    let fileName = '';
+    if (fileEntry && typeof fileEntry.arrayBuffer === 'function') {
+      fileBuffer = Buffer.from(await fileEntry.arrayBuffer());
+      fileName = fileEntry.name || '';
+    }
+    return {
+      accion,
+      tipo,
+      id_inscripcion,
+      empresa_id,
+      fileBuffer,
+      fileName,
+      esMultipart: true
+    };
+  }
+
+  if (cType.includes('application/json')) {
+    let b = leerCuerpo(req);
+    if (!b) {
+      const rawBuffer = await leerBufferRequest(req);
+      if (rawBuffer) {
+        try { b = JSON.parse(rawBuffer.toString('utf8')); } catch {}
+      }
+    }
+    b = b || {};
+    let fileBuffer = null;
+    if (b.contenido_base64 && typeof b.contenido_base64 === 'string') {
+      fileBuffer = Buffer.from(b.contenido_base64, 'base64');
+    }
+    return {
+      accion: String(b.accion || ''),
+      tipo: String(b.tipo || ''),
+      id_inscripcion: String(b.id_inscripcion || ''),
+      empresa_id: b.empresa_id ? Number(b.empresa_id) : null,
+      pathname: b.pathname,
+      bodyJson: b,
+      fileBuffer,
+      esJson: true
+    };
+  }
+
+  // Flujo binario directo (application/octet-stream o application/pdf)
+  const fileBuffer = await leerBufferRequest(req);
+  const q = req.query || {};
+  return {
+    accion: String(q.accion || 'subir'),
+    tipo: String(q.tipo || req.headers['x-tipo'] || ''),
+    id_inscripcion: String(q.id_inscripcion || req.headers['x-id-inscripcion'] || ''),
+    empresa_id: q.empresa_id ? Number(q.empresa_id) : (req.headers['x-empresa-id'] ? Number(req.headers['x-empresa-id']) : null),
+    fileBuffer,
+    esBinario: true
+  };
 }
 
 export default async function handler(req, res) {
@@ -45,9 +143,7 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: 'Acceso denegado: rol no autorizado o usuario inactivo.' });
     }
 
-    const hostAutorizado = obtenerBlobHost();
-
-    // ── GET: Descarga protegida a través del proxy ─────────────────────────
+    // ── GET: Descarga protegida a través del proxy autenticado ──────────────
     if (req.method === 'GET') {
       const { id } = req.query;
       if (!id || typeof id !== 'string') return res.status(400).json({ error: 'Falta el ID del archivo' });
@@ -55,17 +151,18 @@ export default async function handler(req, res) {
       await asegurarEsquema();
       const [archivo] = await sql`SELECT * FROM archivos WHERE id = ${id}`;
       
-      // Ofuscación de seguridad: responde exactamente 404 tanto si no existe
-      // como si pertenece a otra empresa, evitando enumeración de IDs.
-      if (!archivo || (esRolEmpresa(u.rol) && archivo.empresa_id !== u.empresa_id)) {
+      if (!archivo) {
         return res.status(404).json({ error: 'Archivo no encontrado' });
+      }
+      if (esRolEmpresa(u.rol) && archivo.empresa_id !== u.empresa_id) {
+        return res.status(403).json({ error: 'Acceso denegado: el archivo no pertenece a su empresa.' });
       }
       
       let urlObj;
       try { urlObj = new URL(archivo.url); } catch { return res.status(400).json({ error: 'URL inválida en la base de datos' }); }
       
-      // Comparación exacta del host (nunca enviar Authorization a un host desconocido)
-      if (urlObj.protocol !== 'https:' || urlObj.host.toLowerCase() !== hostAutorizado) {
+      // Verificación estricta del host
+      if (urlObj.protocol !== 'https:' || !hostEsValido(urlObj.host)) {
         return res.status(400).json({ error: 'Host de almacenamiento no autorizado' });
       }
       
@@ -83,7 +180,6 @@ export default async function handler(req, res) {
 
       const ext = mimeDetectado === 'application/pdf' ? 'pdf' : (mimeDetectado === 'image/jpeg' ? 'jpg' : 'png');
       const rawFilename = `${archivo.tipo}_${archivo.id_inscripcion}_${archivo.id.slice(0, 8)}.${ext}`;
-      // Sanitización estricta de safeFilename (solo letras, números, guion, guion bajo y punto)
       const safeFilename = rawFilename.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
 
       // Cabeceras estrictas de descarga segura
@@ -100,8 +196,9 @@ export default async function handler(req, res) {
     if (!origenValido(req)) return res.status(403).json({ error: 'Origen no permitido' });
     
     if (req.method === 'POST') {
-      const b = leerCuerpo(req) || {};
-      const accion = String(b.accion || '');
+      const sol = await parsearSolicitud(req);
+      const b = sol.bodyJson || {};
+      const accion = sol.accion;
       
       // ── Subida cliente directa con handleUpload (@vercel/blob/client) ─────
       if (b.type === 'blob.generate-client-token' || b.type === 'blob.upload-completed') {
@@ -127,25 +224,23 @@ export default async function handler(req, res) {
             let maximumSizeInBytes;
             if (tipo === 'pdf_inscripcion') {
               allowedContentTypes = ['application/pdf'];
-              maximumSizeInBytes = 3 * 1024 * 1024; // 3 MB
+              maximumSizeInBytes = 3 * 1024 * 1024;
             } else {
               const tiposSoporte = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
               if (pData.contentType && !tiposSoporte.includes(pData.contentType)) {
                 tiposSoporte.push(pData.contentType);
               }
               allowedContentTypes = tiposSoporte;
-              maximumSizeInBytes = 4 * 1024 * 1024; // 4 MB
+              maximumSizeInBytes = 4 * 1024 * 1024;
             }
 
-            const validUntil = Date.now() + 30 * 60 * 1000; // 30 minutos en milisegundos
-
+            const validUntil = Date.now() + 30 * 60 * 1000;
             const cleanPathname = pathname.replace(/^\//, '').trim();
             await sql`INSERT INTO archivos_pendientes (pathname, empresa_id, usuario_id, id_inscripcion, tipo, expira_en)
                       VALUES (${cleanPathname}, ${targetEmpresaId}, ${u.id}, ${id_inscripcion}, ${tipo}, now() + interval '30 minutes')
                       ON CONFLICT (pathname) DO NOTHING`;
 
             const tokenPayload = JSON.stringify({ empresa_id: targetEmpresaId, tipo, id_inscripcion });
-
             return {
               allowedContentTypes,
               maximumSizeInBytes,
@@ -155,6 +250,105 @@ export default async function handler(req, res) {
           }
         });
         return res.status(200).json(jsonResponse);
+      }
+
+      // ── Acción nueva: Subida directa en el servidor con put() de @vercel/blob ──
+      if (accion === 'subir') {
+        const ip = ipDe(req);
+        if (limitadorSubida.excedido(ip)) {
+          return res.status(429).json({ error: 'Demasiadas solicitudes de subida desde esta IP. Intente más tarde.' });
+        }
+        limitadorSubida.registrar(ip);
+
+        const { tipo, id_inscripcion, fileBuffer } = sol;
+
+        if (!['pdf_inscripcion', 'soporte_nomina'].includes(tipo)) {
+          return res.status(400).json({ error: 'Tipo de archivo inválido. Solo se permite pdf_inscripcion o soporte_nomina.' });
+        }
+
+        if (!id_inscripcion || !/^[A-Za-z0-9_-]{5,80}$/.test(id_inscripcion)) {
+          return res.status(400).json({ error: 'ID de inscripción inválido o no suministrado.' });
+        }
+
+        // Validación de tamaño máximo (4 MB)
+        const MAX_BYTES = 4 * 1024 * 1024;
+        if (!fileBuffer || fileBuffer.length === 0) {
+          return res.status(400).json({ error: 'No se recibió ningún archivo o el archivo está vacío.' });
+        }
+        if (fileBuffer.length > MAX_BYTES) {
+          return res.status(400).json({ error: 'El archivo excede el tamaño máximo permitido de 4 MB.' });
+        }
+
+        // Validación de tipo real de archivo (Magic Bytes)
+        const mimeReal = detectarTipoContenido(fileBuffer);
+        if (tipo === 'pdf_inscripcion') {
+          // Para PDF, debe empezar exactamente por %PDF (0x25 0x50 0x44 0x46)
+          const esPdf = fileBuffer.length >= 4 &&
+            fileBuffer[0] === 0x25 && fileBuffer[1] === 0x50 &&
+            fileBuffer[2] === 0x44 && fileBuffer[3] === 0x46;
+          if (!esPdf || mimeReal !== 'application/pdf') {
+            return res.status(400).json({ error: 'El archivo de inscripción debe ser un documento PDF válido que empiece por %PDF.' });
+          }
+        } else {
+          // Soporte de nómina: PDF, JPEG o PNG
+          if (!mimeReal || !['application/pdf', 'image/jpeg', 'image/png'].includes(mimeReal)) {
+            return res.status(400).json({ error: 'El soporte debe ser un archivo válido en formato PDF, JPG o PNG.' });
+          }
+        }
+
+        // Validación en servidor: que la inscripción exista y corresponda a quien sube (empresa, id_inscripcion)
+        await asegurarEsquema();
+        const [solicitud] = await sql`SELECT empresa_id FROM solicitudes WHERE id_inscripcion = ${id_inscripcion} LIMIT 1`;
+        if (!solicitud) {
+          return res.status(404).json({ error: 'La inscripción indicada no existe en el sistema.' });
+        }
+
+        let targetEmpresaId = solicitud.empresa_id;
+        if (esRolEmpresa(u.rol)) {
+          if (solicitud.empresa_id !== u.empresa_id) {
+            return res.status(403).json({ error: 'Acceso denegado: la inscripción no pertenece a su empresa.' });
+          }
+          targetEmpresaId = u.empresa_id;
+        }
+
+        // Pathname con una parte aleatoria larga y sin datos personales (nada de la cédula)
+        const ext = mimeReal === 'application/pdf' ? 'pdf' : (mimeReal === 'image/jpeg' ? 'jpg' : 'png');
+        const aleatorioLargo = crypto.randomBytes(24).toString('hex'); // 48 caracteres aleatorios seguros
+        const pathname = `${targetEmpresaId}/${tipo}_${aleatorioLargo}.${ext}`;
+
+        let blobResult;
+        try {
+          blobResult = await put(pathname, fileBuffer, {
+            access: 'private',
+            addRandomSuffix: true,
+            contentType: mimeReal,
+            token: process.env.BLOB_READ_WRITE_TOKEN
+          });
+        } catch (putErr) {
+          console.error('Error completo en put() de @vercel/blob:', putErr);
+          return res.status(500).json({
+            error: `Error al almacenar archivo en Vercel Blob: ${putErr?.message || 'Error desconocido'}`
+          });
+        }
+
+        // Si ya existía un archivo previo para esta inscripción y tipo (reintento), reemplazar
+        const [previo] = await sql`SELECT id, url FROM archivos WHERE id_inscripcion = ${id_inscripcion} AND tipo = ${tipo} LIMIT 1`;
+        if (previo) {
+          try {
+            await del(previo.url, { token: process.env.BLOB_READ_WRITE_TOKEN });
+          } catch (delPrevErr) {
+            console.error('Advertencia eliminando archivo previo reemplazado:', delPrevErr?.message);
+          }
+          await sql`DELETE FROM archivos WHERE id = ${previo.id}`;
+        }
+
+        const id = crypto.randomUUID();
+        await sql`INSERT INTO archivos (id, empresa_id, id_inscripcion, tipo, url)
+                  VALUES (${id}, ${targetEmpresaId}, ${id_inscripcion}, ${tipo}, ${blobResult.url})`;
+
+        await auditar(req, u, 'subir', String(id), { id_inscripcion, tipo });
+
+        return res.status(200).json({ ok: true, id, url: blobResult.url });
       }
 
       // ── Acción 1: Emitir token temporal de subida (compatibilidad) ────────
@@ -189,17 +383,15 @@ export default async function handler(req, res) {
         const ext = tipo === 'pdf_inscripcion' ? 'pdf' : 'pdf';
         if (tipo === 'pdf_inscripcion') {
           allowedContentTypes = ['application/pdf'];
-          maximumSizeInBytes = 3 * 1024 * 1024; // 3 MB
+          maximumSizeInBytes = 3 * 1024 * 1024;
         } else {
           allowedContentTypes = ['application/pdf', 'image/jpeg', 'image/png'];
-          maximumSizeInBytes = 4 * 1024 * 1024; // 4 MB
+          maximumSizeInBytes = 4 * 1024 * 1024;
         }
         
-        // Generar ruta única en el servidor con extensión
         const r = crypto.randomBytes(12).toString('hex');
         const pathname = `${targetEmpresaId}/${id_inscripcion}_${tipo}_${r}.${ext}`;
         
-        // Registrar la ruta emitida en BD con expiración de 30 minutos
         await sql`INSERT INTO archivos_pendientes (pathname, empresa_id, usuario_id, id_inscripcion, tipo, expira_en)
                   VALUES (${pathname}, ${targetEmpresaId}, ${u.id}, ${id_inscripcion}, ${tipo}, now() + interval '30 minutes')
                   ON CONFLICT (pathname) DO NOTHING`;
@@ -228,10 +420,9 @@ export default async function handler(req, res) {
         return res.status(200).json({ type: 'upload_token', clientToken: jsonResponse.clientToken, pathname });
       }
       
-      // ── Acción 2: Confirmar y registrar archivo subido ─────────────────────
+      // ── Acción 2: Confirmar y registrar archivo subido (compatibilidad) ────
       if (accion === 'registrar') {
         const { id_inscripcion, tipo } = b;
-        // La URL enviada por el cliente se IGNORA deliberadamente. Se construye exclusivamente en el servidor.
         const pathnameCliente = typeof b.pathname === 'string' ? b.pathname.replace(/^\//, '').trim() : '';
 
         if (!id_inscripcion || !/^[A-Za-z0-9_-]{5,80}$/.test(id_inscripcion) || !tipo || !pathnameCliente) {
@@ -248,7 +439,6 @@ export default async function handler(req, res) {
           }
         }
 
-        // UPDATE atómico: marca usado = true en una única sentencia SQL
         const [pendiente] = await sql`
           UPDATE archivos_pendientes
              SET usado = true
@@ -265,10 +455,9 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'Ruta de subida no emitida, expirada o ya utilizada' });
         }
 
-        // Construir la URL exclusivamente en el servidor a partir de BLOB_HOST y pendiente.pathname
+        const hostAutorizado = (process.env.BLOB_HOST || '').trim().toLowerCase() || 'blob.vercel-storage.com';
         const urlServidor = `https://${hostAutorizado}/${pendiente.pathname}`;
 
-        // Inspección y validación de Magic Bytes en el servidor usando urlServidor
         const headersFetch = process.env.BLOB_READ_WRITE_TOKEN
           ? { 'Authorization': `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` }
           : {};
@@ -289,12 +478,10 @@ export default async function handler(req, res) {
         }
 
         if (!esValido) {
-          // Si falla la validación, borra el blob del almacenamiento
           try {
             await del(urlServidor, { token: process.env.BLOB_READ_WRITE_TOKEN });
           } catch (delErr) {
             console.error('Error eliminando blob inválido, marcado para reintento por cron:', delErr);
-            // Si del() falla, marcar pendiente_borrar = true para reintento automático por el cron
             await sql`UPDATE archivos_pendientes SET pendiente_borrar = true WHERE id = ${pendiente.id}`;
           }
           return res.status(400).json({ error: 'El contenido del archivo no coincide con el formato permitido o excede el límite de tamaño' });
@@ -320,6 +507,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: e.message });
     }
     console.error('Error en /api/archivo:', e);
-    return res.status(500).json({ error: 'Error procesando la solicitud del archivo' });
+    return res.status(500).json({ error: e.message || 'Error procesando la solicitud del archivo' });
   }
 }
