@@ -517,7 +517,7 @@ R.pago = () => {
 function cajaEnvio(){
   const g = generado, esEmpresa = SESION && ['empresa_admin','empresa_usuario'].includes(SESION.usuario.rol), panel = esEmpresa ? '/portal' : '/admin';
   const st = g.envio==='ok' ? `<div class="done-box"><h3>Solicitud enviada</h3><div>${esc(g.nombre)} quedó descargado. La inscripción quedó <strong>pendiente de validación</strong>; puede ver su estado en <a href="${panel}">su panel</a>.</div>`
-    : g.envio==='error_pdf' ? `<div class="done-box" style="background:var(--red-tint)"><h3 style="color:var(--red-dark)">Inscripción enviada, pero falló la subida de los archivos (PDF/Soporte)</h3><div>Quedó guardada con una alerta. Revise su conexión y toque «Reintentar subida».</div>`
+    : g.envio==='error_pdf' ? `<div class="done-box" style="background:var(--red-tint)"><h3 style="color:var(--red-dark)">Inscripción enviada, pero falló la subida de los archivos (PDF/Soporte)</h3><div>Quedó guardada con una alerta. Revise su conexión y toque «Reintentar subida».</div>${g.error ? `<div style="margin-top:6px;font-size:12px;color:var(--red-dark);word-break:break-word;"><strong>Detalle:</strong> ${esc(g.error)}</div>` : ''}</div>`
     : g.envio==='error' ? `<div class="done-box" style="background:var(--red-tint)"><h3 style="color:var(--red-dark)">El PDF se generó, pero la solicitud no se envió</h3><div>${esc(g.error||'')} Revise su conexión y toque «Reintentar envío».</div>`
     : `<div class="done-box" style="background:#EEF3FF"><h3 style="color:#173A8C">Enviando la solicitud…</h3><div>${esc(g.nombre)} quedó descargado.</div>`;
   return st + `<div class="row-btns"><button type="button" class="btn ghost" data-act="redownload">Descargar PDF de nuevo</button>
@@ -1032,29 +1032,65 @@ async function enviarInscripcion(){
   
   try {
     try {
-      const { put } = await import('/vendor/vercel-blob-client.js');
+      const { upload } = await import('/vendor/vercel-blob-client.js');
       const subeArchivo = async (file, tipo) => {
         const empId = S.convenio && S.convenio.empresa_id;
-        const rT = await fetch(CONFIG.ENDPOINT_URL.replace('/inscripcion','/archivo'), {
-          method: 'POST',
-          cache: 'no-store',
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
-          body: JSON.stringify({ accion: 'token_subida', tipo, id_inscripcion: generado.id_inscripcion, empresa_id: empId })
-        });
-        const tData = await rT.json();
-        if (!rT.ok) throw new Error(tData.error || 'Error al obtener token de subida');
-        const res = await put(tData.pathname || file.name, file, { access: 'public', token: tData.clientToken });
-        const rReg = await fetch(CONFIG.ENDPOINT_URL.replace('/inscripcion','/archivo'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accion: 'registrar', tipo, id_inscripcion: generado.id_inscripcion, empresa_id: empId, pathname: tData.pathname })
-        });
-        const regData = await rReg.json().catch(() => ({}));
-        if (!rReg.ok) throw new Error(regData.error || 'Error al registrar archivo');
+
+        // Determinar extensión y contentType real del archivo
+        let ext = 'pdf';
+        let contentType = 'application/pdf';
+        if (tipo === 'pdf_inscripcion') {
+          ext = 'pdf';
+          contentType = 'application/pdf';
+        } else {
+          if (file.type === 'image/jpeg' || /\.jpe?g$/i.test(file.name || '')) {
+            ext = 'jpg';
+            contentType = 'image/jpeg';
+          } else if (file.type === 'image/png' || /\.png$/i.test(file.name || '')) {
+            ext = 'png';
+            contentType = 'image/png';
+          } else if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '')) {
+            ext = 'pdf';
+            contentType = 'application/pdf';
+          } else {
+            contentType = file.type || 'application/pdf';
+            ext = file.name && file.name.includes('.') ? file.name.split('.').pop().toLowerCase() : 'pdf';
+          }
+        }
+
+        const r = Math.random().toString(16).slice(2, 10);
+        const pathname = `${empId}/${generado.id_inscripcion}_${tipo}_${r}.${ext}`;
+
+        try {
+          const res = await upload(pathname, file, {
+            access: 'public',
+            handleUploadUrl: '/api/archivo',
+            contentType,
+            clientPayload: JSON.stringify({ tipo, id_inscripcion: generado.id_inscripcion, empresa_id: empId, contentType })
+          });
+
+          const rReg = await fetch(CONFIG.ENDPOINT_URL.replace('/inscripcion','/archivo'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              accion: 'registrar',
+              tipo,
+              id_inscripcion: generado.id_inscripcion,
+              empresa_id: empId,
+              pathname: res.pathname || pathname
+            })
+          });
+          const regData = await rReg.json().catch(() => ({}));
+          if (!rReg.ok) throw new Error(regData.error || 'Error al registrar archivo');
+        } catch(err) {
+          console.error(`Error al subir ${tipo} (${file.name}): ${err.message} | file.type: "${file.type}" | file.size: ${file.size} bytes`);
+          throw new Error(`Error al subir ${tipo} (${file.name}): ${err.message} | file.type: "${file.type}" | file.size: ${file.size} bytes`);
+        }
       };
 
       if (!generado.pdfSubido) {
-        await subeArchivo(new File([generado.bytes], generado.nombre, { type: 'application/pdf' }), 'pdf_inscripcion');
+        const filePdf = new File([generado.bytes], generado.nombre, { type: 'application/pdf' });
+        await subeArchivo(filePdf, 'pdf_inscripcion');
         generado.pdfSubido = true;
       }
       if (generado.soporte && !generado.soporteSubido) {
@@ -1063,7 +1099,8 @@ async function enviarInscripcion(){
       }
       generado.errorUpload = false;
     } catch(e) {
-      console.error('Falla al subir archivos:', e);
+      console.error('Falla al subir archivos:', e.message);
+      generado.error = e.message;
       generado.errorUpload = true;
     }
 
