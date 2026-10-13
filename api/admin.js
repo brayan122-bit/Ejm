@@ -3,8 +3,10 @@
 //  solo maestro:        empresa_guardar, dominios_guardar, usuarios, usuario_guardar,
 //                       usuario_clave, usuario_activar
 //  empresa_admin:       mis_usuarios, mi_usuario_guardar, mi_usuario_clave, mi_usuario_activar
-import { sql, asegurarEsquema, leerCuerpo, origenValido, periodoActual, periodoValido, auditar,
-         fechaHoy, texto, entero, registrarError, dominioDeEmail, DOMINIOS_PUBLICOS } from './_db.js';
+import {
+  sql, asegurarEsquema, leerCuerpo, origenValido, periodoActual, periodoValido, auditar,
+  fechaHoy, texto, entero, registrarError, dominioDeEmail, DOMINIOS_PUBLICOS
+} from './_db.js';
 import { exigir, hashClave, claveTemporal, puedeValidar } from './_auth.js';
 import { alertasDe, PRODUCTOS, CATALOGO } from './_catalogo.js';
 
@@ -44,6 +46,7 @@ export default async function handler(req, res) {
     return await fn(b, u, res, req);
   } catch (e) {
     if (e.publico) return err(res, 400, e.message);
+    console.error('Error en administración (stack):', e && e.stack ? e.stack : e);
     registrarError('Error en administración', e);
     return err(res, 500, 'Error del servidor. Intente de nuevo.');
   }
@@ -54,7 +57,7 @@ const publico = msg => Object.assign(new Error(msg), { publico: true });
 
 const ACCIONES = {
   // ── Solicitudes del mes con validaciones automáticas ──────────────────────
-  async solicitudes(b, u, res) {
+  async solicitudes(b, u, res, req) {
     const periodo = periodoValido(b.periodo) ? b.periodo : periodoActual();
     const eid = empresaId(b.empresa_id);
     const todas = eid
@@ -73,7 +76,7 @@ const ACCIONES = {
                   FROM solicitudes s JOIN empresas e ON e.id = s.empresa_id
                   WHERE s.periodo = ${periodo} ORDER BY s.id DESC LIMIT 20000`;
     const empIds = [...new Set(todas.map(s => s.empresa_id))];
-    const docs   = [...new Set(todas.map(s => s.titular_num_doc))];
+    const docs = [...new Set(todas.map(s => s.titular_num_doc))];
     const [cons, emps] = empIds.length ? await Promise.all([
       sql`SELECT id, empresa_id, titular_num_doc, asistencia_id, asistencia, plan_id, plan, mascota, estado, alta_solicitud_id, baja_solicitud_id
           FROM consolidado WHERE empresa_id = ANY(${empIds}) AND titular_num_doc = ANY(${docs})`,
@@ -84,8 +87,10 @@ const ACCIONES = {
     const nombreVal = new Map(validadores.map(v => [v.id, v.nombre]));
     const filas = todas.map(s => ({ ...s, alertas: alertas.get(s.id) || [], validado_por_nombre: nombreVal.get(s.validado_por) || '' }));
     const periodos = await sql`SELECT DISTINCT periodo FROM solicitudes ORDER BY periodo DESC LIMIT 24`;
-    return res.status(200).json({ periodo, periodo_actual: periodoActual(),
-      periodos: [...new Set([periodoActual(), ...periodos.map(p => p.periodo)])], filas });
+    return res.status(200).json({
+      periodo, periodo_actual: periodoActual(),
+      periodos: [...new Set([periodoActual(), ...periodos.map(p => p.periodo)])], filas
+    });
   },
 
   // ── Marcar solicitudes como válidas / inválidas / pendientes ──────────────
@@ -160,7 +165,7 @@ const ACCIONES = {
   },
 
   // ── Consolidado ───────────────────────────────────────────────────────────
-  async consolidado(b, u, res) {
+  async consolidado(b, u, res, req) {
     const eid = empresaId(b.empresa_id);
     const filas = eid
       ? await sql`SELECT c.*, to_char(c.fecha_alta,'DD/MM/YYYY') AS fecha_alta_txt,
@@ -188,7 +193,7 @@ const ACCIONES = {
     const buscar = (asis, plan) => {
       const a = norm(asis), p = norm(plan);
       return PRODUCTOS.find(x => [norm(x.asistencia), norm(x.asistencia_id), norm(CATALOGO[x.asistencia_id].t)].includes(a) &&
-                                 [norm(x.plan), norm(x.plan_id)].includes(p)) || null;
+        [norm(x.plan), norm(x.plan_id)].includes(p)) || null;
     };
     const errores = []; const validas = [];
     filas.forEach((f, i) => {
@@ -250,7 +255,7 @@ const ACCIONES = {
     if (!b.id_lote || !Array.isArray(b.filas) || !b.filas.length) return res.status(400).json({ error: 'Faltan filas o id_lote' });
     if (b.filas.length > 3000) return res.status(400).json({ error: 'Máximo 3000 filas por lote' });
 
-    const ids = b.filas.map((_, i) => `${b.id_lote}-F${i+2}`);
+    const ids = b.filas.map((_, i) => `${b.id_lote}-F${i + 2}`);
     const existentesQuery = await sql`SELECT id_inscripcion FROM solicitudes WHERE empresa_id = ${empId} AND id_inscripcion = ANY(${ids})`;
     const existentes = new Set(existentesQuery.map(x => x.id_inscripcion));
 
@@ -258,12 +263,12 @@ const ACCIONES = {
     const validas = [];
     let omitidas_repetidas = 0;
     const norm = s => String(s || '').trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-    
+
     const parseExcelDate = v => {
       if (!v) return null;
       if (typeof v === 'number') {
         const d = new Date(Math.round((v - 25569) * 86400 * 1000));
-        return `${d.getUTCDate().toString().padStart(2, '0')}/${(d.getUTCMonth()+1).toString().padStart(2, '0')}/${d.getUTCFullYear()}`;
+        return `${d.getUTCDate().toString().padStart(2, '0')}/${(d.getUTCMonth() + 1).toString().padStart(2, '0')}/${d.getUTCFullYear()}`;
       }
       const txt = String(v).trim();
       return /^(\d{2})\/(\d{2})\/(\d{4})$/.test(txt) ? txt : null;
@@ -279,14 +284,14 @@ const ACCIONES = {
 
       let rawDoc = f.num_doc || f.titular_num_doc || '';
       if (typeof rawDoc === 'number') {
-         if (rawDoc.toString().includes('e') || rawDoc.toString().includes('E')) {
-            errores.push(`Fila ${fila}: La cédula está en notación científica; formatee la columna como Texto en Excel`);
-            return;
-         }
-         rawDoc = Math.floor(rawDoc).toString();
+        if (rawDoc.toString().includes('e') || rawDoc.toString().includes('E')) {
+          errores.push(`Fila ${fila}: La cédula está en notación científica; formatee la columna como Texto en Excel`);
+          return;
+        }
+        rawDoc = Math.floor(rawDoc).toString();
       }
       const doc = String(rawDoc).trim();
-      
+
       const nombres = String(f.nombres || '').trim();
       const apellidos = String(f.apellidos || '').trim();
       const a = norm(f.asistencia);
@@ -310,7 +315,7 @@ const ACCIONES = {
           else if (['Empresa', 'Cofinanciado'].includes(pago)) modeloAplicado = 2;
           else { errores.push(`Fila ${fila}: empresa mixta requiere columna "modelo" (1 o 2) o "forma_pago" válida`); return; }
         }
-        
+
         const vm = Number(f.valor_mensual) || prod.valor;
         validas.push({
           empresa_id: emp.id,
@@ -354,18 +359,18 @@ const ACCIONES = {
     });
 
     if (validas.length > 0) {
-      await sql.transaction(validas.map(v => 
+      await sql.transaction(validas.map(v =>
         sql`INSERT INTO solicitudes (empresa_id, id_inscripcion, tipo, origen_tipo, enviado_por, titular_num_doc, titular_nombre, asistencia_id, asistencia, plan_id, plan, personas, pago, valor_mensual, modelo_aplicado, datos, estado, recibido_en, periodo)
             VALUES (${v.empresa_id}, ${v.id_inscripcion}, ${v.tipo}, ${v.origen_tipo}, ${u.id}, ${v.titular_num_doc}, ${v.titular_nombre}, ${v.asistencia_id}, ${v.asistencia}, ${v.plan_id}, ${v.plan}, ${v.personas}, ${v.pago}, ${v.valor_mensual}, ${v.modelo_aplicado}, ${JSON.stringify(v.datos)}::jsonb, ${v.estado}, now(), ${periodoActual()})`
       ));
     }
-    
+
     await auditar(req, u, 'importar', String(emp.id), { id_lote: b.id_lote, cargadas: validas.length, omitidas: omitidas_repetidas });
     return res.status(200).json({ ok: true, cargadas: validas.length, omitidas: omitidas_repetidas, errores });
   },
 
   // ── Empresas ──────────────────────────────────────────────────────────────
-  async empresas(b, u, res) {
+  async empresas(b, u, res, req) {
     const filas = await sql`SELECT e.id, e.nit, e.nombre, e.modelo,
         COALESCE(e.dominios, '[]'::jsonb) AS dominios,
         e.productos, e.activa,
@@ -376,7 +381,7 @@ const ACCIONES = {
   },
 
   async empresa_guardar(b, u, res, req) {
-    const nit    = texto(b.nit, 20).replace(/[^0-9-]/g, '');
+    const nit = texto(b.nit, 20).replace(/[^0-9-]/g, '');
     const nombre = texto(b.nombre, 150);
     const modelo = [1, 2, 3].includes(Number(b.modelo)) ? Number(b.modelo) : 1;
     const productos = Array.isArray(b.productos)
@@ -428,7 +433,7 @@ const ACCIONES = {
   },
 
   // ── Usuarios (gestión global, solo maestro) ───────────────────────────────
-  async usuarios(b, u, res) {
+  async usuarios(b, u, res, req) {
     const filas = await sql`SELECT x.id, x.email, x.nombre, x.rol, x.empresa_id, x.activo,
         x.ultimo_ingreso, COALESCE(x.estado_acceso, 'activo') AS estado_acceso,
         e.nombre AS empresa_nombre
@@ -438,7 +443,7 @@ const ACCIONES = {
   },
 
   async usuario_guardar(b, u, res, req) {
-    const email  = texto(b.email, 200).toLowerCase();
+    const email = texto(b.email, 200).toLowerCase();
     const nombre = texto(b.nombre, 150);
     const ROLES_VALIDOS = ['maestro', 'validador', 'empresa_admin', 'empresa_usuario'];
     const rol = ROLES_VALIDOS.includes(b.rol) ? b.rol : null;
@@ -514,7 +519,7 @@ const ACCIONES = {
   },
 
   // ── Acciones de empresa_admin (solo su propia empresa) ────────────────────
-  async mis_usuarios(b, u, res) {
+  async mis_usuarios(b, u, res, req) {
     // Siempre filtra por la empresa de la sesión (no acepta empresa_id del body)
     const filas = await sql`SELECT id, email, nombre, rol, activo,
         COALESCE(estado_acceso, 'activo') AS estado_acceso, ultimo_ingreso
@@ -523,7 +528,7 @@ const ACCIONES = {
   },
 
   async mi_usuario_guardar(b, u, res, req) {
-    const email  = texto(b.email, 200).toLowerCase();
+    const email = texto(b.email, 200).toLowerCase();
     const nombre = texto(b.nombre, 150);
     // Lista explícita y cerrada de roles que empresa_admin puede gestionar
     const ROLES_ASIGNABLES_EMPRESA = new Set(['empresa_usuario']);
