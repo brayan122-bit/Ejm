@@ -1,6 +1,7 @@
 // GET ?doc=: asistencias activas de una cédula en la empresa. POST: registra la baja de las elegidas.
 import { sql, asegurarEsquema, ipDe, crearLimitador, leerCuerpo, origenValido, periodoActual, texto, registrarError, auditar, obtenerModoConsolidado } from './_db.js';
 import { exigir, empresaObjetivo } from './_auth.js';
+import { parsearDinero, precioCatalogo } from './_catalogo.js';
 
 const limitador = crearLimitador(60, 10 * 60 * 1000);
 const docValido = d => /^[0-9A-Za-z]{4,20}$/.test(d);
@@ -30,7 +31,14 @@ export default async function handler(req, res) {
                  c.asistencia,
                  COALESCE(c.plan, 'Plan Único') AS plan,
                  '' AS mascota,
-                 COALESCE(c.valor_con_iva, 0)::numeric AS valor_mensual,
+                 c.valor_con_iva,
+                 (
+                   SELECT m.valor
+                   FROM consolidado_meses_test m
+                   WHERE m.registro_id = c.id AND m.valor > 0
+                   ORDER BY m.periodo DESC
+                   LIMIT 1
+                 ) AS ultimo_valor_mes,
                  to_char(c.fecha_cargue, 'DD/MM/YYYY') AS fecha_alta,
                  COALESCE(c.tipo_doc, 'CC') AS tipo_doc,
                  EXISTS (
@@ -55,7 +63,14 @@ export default async function handler(req, res) {
                  c.asistencia,
                  COALESCE(c.plan, 'Plan Único') AS plan,
                  '' AS mascota,
-                 COALESCE(c.valor_con_iva, 0)::numeric AS valor_mensual,
+                 c.valor_con_iva,
+                 (
+                   SELECT m.valor
+                   FROM consolidado_meses m
+                   WHERE m.registro_id = c.id AND m.valor > 0
+                   ORDER BY m.periodo DESC
+                   LIMIT 1
+                 ) AS ultimo_valor_mes,
                  to_char(c.fecha_cargue, 'DD/MM/YYYY') AS fecha_alta,
                  COALESCE(c.tipo_doc, 'CC') AS tipo_doc,
                  EXISTS (
@@ -86,6 +101,15 @@ export default async function handler(req, res) {
             AND UPPER(BTRIM(c.estado)) = 'ACTIVO'
           ORDER BY c.asistencia, c.plan
         `;
+      }
+
+      for (const c of filas) {
+        let val = parsearDinero(c.valor_con_iva != null ? c.valor_con_iva : c.valor_mensual);
+        if (!val && c.ultimo_valor_mes != null) val = parsearDinero(c.ultimo_valor_mes);
+        if (!val) val = precioCatalogo(c.asistencia, c.plan);
+        c.valor_mensual = val;
+        delete c.ultimo_valor_mes;
+        delete c.valor_con_iva;
       }
 
       const [pend] = await sql`
@@ -171,6 +195,12 @@ export default async function handler(req, res) {
 
     if (filas.length !== ids.length)
       return res.status(409).json({ error: 'Alguna asistencia ya no está activa o ya tiene una baja pendiente. Busque la cédula de nuevo.' });
+
+    for (const c of filas) {
+      let val = parsearDinero(c.valor_con_iva != null ? c.valor_con_iva : c.valor_mensual);
+      if (!val) val = precioCatalogo(c.asistencia, c.plan);
+      c.valor_mensual = val;
+    }
 
     const periodo = periodoActual();
     const fecha = new Intl.DateTimeFormat('es-CO', { timeZone: 'America/Bogota', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date());

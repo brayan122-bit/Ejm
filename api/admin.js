@@ -583,27 +583,109 @@ const ACCIONES = {
       meses: mesesMap.get(f.id) || {}
     }));
 
-    const [kpisRow] = esTest
+    // Cálculo preciso de KPIs y resumen "Qué tienen contratado"
+    const todasSuscripciones = esTest
       ? await sql`
-        SELECT
-          count(*)::int AS total_suscripciones,
-          count(*) FILTER (WHERE estado = 'Activo')::int AS activas,
-          count(*) FILTER (WHERE estado = 'Inactivo')::int AS inactivas,
-          count(*) FILTER (WHERE xc_subscriptionname__c IS NULL OR xc_subscriptionname__c = '')::int AS sin_xc,
-          coalesce(sum(valor_con_iva) FILTER (WHERE estado = 'Activo'), 0)::numeric AS valor_mensual_total
-        FROM consolidado_conciliacion_test
-        WHERE (${eid}::int IS NULL OR empresa_id = ${eid})
+        SELECT c.id, c.empresa_id, c.estado, c.xc_subscriptionname__c,
+               c.asistencia, c.plan, c.valor_con_iva,
+               COALESCE(c.doc_asociado, c.numero_identificacion) AS doc,
+               (
+                 SELECT m.valor
+                 FROM consolidado_meses_test m
+                 WHERE m.registro_id = c.id AND m.valor > 0
+                 ORDER BY m.periodo DESC
+                 LIMIT 1
+               ) AS ultimo_valor_mes
+        FROM consolidado_conciliacion_test c
+        WHERE (${eid}::int IS NULL OR c.empresa_id = ${eid})
       `
       : await sql`
-        SELECT
-          count(*)::int AS total_suscripciones,
-          count(*) FILTER (WHERE estado = 'Activo')::int AS activas,
-          count(*) FILTER (WHERE estado = 'Inactivo')::int AS inactivas,
-          count(*) FILTER (WHERE xc_subscriptionname__c IS NULL OR xc_subscriptionname__c = '')::int AS sin_xc,
-          coalesce(sum(valor_con_iva) FILTER (WHERE estado = 'Activo'), 0)::numeric AS valor_mensual_total
-        FROM consolidado_conciliacion
-        WHERE (${eid}::int IS NULL OR empresa_id = ${eid})
+        SELECT c.id, c.empresa_id, c.estado, c.xc_subscriptionname__c,
+               c.asistencia, c.plan, c.valor_con_iva,
+               COALESCE(c.doc_asociado, c.numero_identificacion) AS doc,
+               (
+                 SELECT m.valor
+                 FROM consolidado_meses m
+                 WHERE m.registro_id = c.id AND m.valor > 0
+                 ORDER BY m.periodo DESC
+                 LIMIT 1
+               ) AS ultimo_valor_mes
+        FROM consolidado_conciliacion c
+        WHERE (${eid}::int IS NULL OR c.empresa_id = ${eid})
       `;
+
+    const porDoc = new Map();
+    let activasCount = 0, inactivasCount = 0, sinXcCount = 0;
+    const mapaProductos = new Map();
+    let totalValorActivo = 0;
+
+    for (const s of todasSuscripciones) {
+      const docClean = String(s.doc || '').trim();
+      if (docClean) {
+        porDoc.set(docClean, (porDoc.get(docClean) || 0) + 1);
+      }
+      const st = String(s.estado || '').trim().toUpperCase();
+      const esActivo = st === 'ACTIVO';
+      if (esActivo) activasCount++;
+      else inactivasCount++;
+
+      if (!s.xc_subscriptionname__c || !String(s.xc_subscriptionname__c).trim()) {
+        sinXcCount++;
+      }
+
+      if (esActivo) {
+        let planNombre = s.plan && String(s.plan).trim() ? String(s.plan).trim() : '';
+        if (!planNombre || planNombre.toLowerCase() === 'plan único' || planNombre.toLowerCase() === 'plan unico') {
+          const asisNorm = normalizarNombreAsistencia(s.asistencia);
+          if (asisNorm.includes('MASCOTA')) planNombre = 'Hogar Mascotas';
+          else if (asisNorm.includes('PROTECCION HOGAR') || asisNorm.includes('HOGAR')) planNombre = 'Plan 1';
+          else planNombre = 'Plan Único';
+        }
+
+        let val = parsearDinero(s.valor_con_iva);
+        if (!val && s.ultimo_valor_mes != null) {
+          val = parsearDinero(s.ultimo_valor_mes);
+        }
+        if (!val) {
+          val = precioCatalogo(s.asistencia, planNombre);
+        }
+
+        totalValorActivo += val;
+
+        const kProd = `${s.asistencia || 'Sin Asistencia'} · ${planNombre}`;
+        const prod = mapaProductos.get(kProd) || {
+          asistencia: s.asistencia || 'Sin Asistencia',
+          plan: planNombre,
+          cantidad: 0,
+          valor: 0
+        };
+        prod.cantidad++;
+        prod.valor += val;
+        mapaProductos.set(kProd, prod);
+      }
+    }
+
+    let personasMulti = 0;
+    for (const count of porDoc.values()) {
+      if (count > 1) personasMulti++;
+    }
+
+    const productosContratados = [...mapaProductos.values()].sort((a, b) =>
+      a.asistencia.localeCompare(b.asistencia) || a.plan.localeCompare(b.plan)
+    );
+
+    const kpisData = {
+      total: todasSuscripciones.length,
+      total_suscripciones: todasSuscripciones.length,
+      personas_unicas: porDoc.size,
+      activas: activasCount,
+      inactivas: inactivasCount,
+      pendientes_xc: sinXcCount,
+      sin_xc: sinXcCount,
+      personas_multi_asistencia: personasMulti,
+      valor_total_activo: totalValorActivo,
+      valor_mensual_total: totalValorActivo
+    };
 
     return res.status(200).json({
       ok: true,
@@ -614,7 +696,12 @@ const ACCIONES = {
       limite,
       periodos: periodos.map(p => ({ periodo: p, etiqueta: etiquetaPeriodo(p) })),
       filas: filasConMeses,
-      kpis: kpisRow || { total_suscripciones: 0, activas: 0, inactivas: 0, sin_xc: 0, valor_mensual_total: 0 }
+      kpis: kpisData,
+      resumen_contratado: {
+        por_producto: productosContratados,
+        total_asistencias: activasCount,
+        total_valor: totalValorActivo
+      }
     });
   },
 
