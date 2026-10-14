@@ -37,32 +37,39 @@ function pintarSolicitudes() {
   const base = SOL.filas.filter(s => !$('#sEmpresa').value || String(s.empresa_id) === $('#sEmpresa').value);
   const cnt = st => base.filter(s => s.estado === st).length;
   const pend = SOL.filas.filter(s => s.estado === 'pendiente').length;
-  $('#cntPend').textContent = pend; $('#cntPend').hidden = !pend;
-  $('#sKpis').innerHTML = [
-    ['Recibidas en el mes', base.length, `${base.filter(s => s.tipo === 'alta').length} altas · ${base.filter(s => s.tipo === 'baja').length} bajas`],
-    ['Pendientes', cnt('pendiente'), `${base.filter(s => s.estado === 'pendiente' && s.alertas.length).length} con alertas`],
-    ['Válidas', cnt('valida'), 'Ya aplicadas al consolidado', 'ok'],
-    ['Inválidas', cnt('invalida'), 'Visibles para la empresa']
-  ].map(([l, v, d, c]) => `<div class="kpi ${c || ''}"><div class="l">${l}</div><div class="v">${numero(v)}</div><div class="d">${esc(d)}</div></div>`).join('');
-  $('#sTb').innerHTML = lista.map(s => `<tr class="click ${sel.has(s.id) ? 'sel' : ''}" data-id="${s.id}">
-    <td><input type="checkbox" data-sel="${s.id}" ${sel.has(s.id) ? 'checked' : ''} aria-label="Seleccionar ${s.id}"></td>
-    <td class="nw">${s.id}</td><td class="nw">${esc(fechaHora(s.recibido_en))}</td>
-    <td>${esc(s.empresa_nombre)}<small class="muted">NIT ${esc(s.empresa_nit)}</small></td>
-    <td><span class="tag ${s.tipo}">${s.tipo === 'alta' ? 'Alta' : 'Baja'}</span></td>
-    <td>${esc(s.titular_nombre)}<small class="muted">${esc(s.titular_num_doc)}</small></td>
-    <td>${esc(s.asistencia)} · ${esc(s.plan)}${s.mascota ? `<small class="muted">${esc(s.mascota)}</small>` : ''}</td>
-    <td class="num">${s.valor_mensual ? pesos(s.valor_mensual) : ''}<small class="muted" style="display:block">Mod. ${s.modelo_aplicado || 1}</small></td>
-    <td>${s.alertas.length ? s.alertas.map(a => `<span class="al">${esc(a.texto)}</span>`).join('') : '<span class="muted" style="font-size:12.5px">Sin alertas</span>'}</td>
-    <td><span class="tag ${s.estado}">${ESTADOS[s.estado]}</span>${s.estado === 'invalida' && s.motivo ? `<span class="motivo">${esc(s.motivo)}</span>` : ''}
-      ${s.validado_por_nombre ? `<small class="muted">${esc(s.validado_por_nombre)}</small>` : ''}</td></tr>`).join('');
-  $('#sVacio').hidden = lista.length > 0;
-  $('#sVacio').textContent = SOL.filas.length ? 'No hay solicitudes con esos filtros.' : `No llegaron solicitudes en ${nombreMes(SOL.periodo)}.`;
-  $('#sTodos').checked = lista.length > 0 && lista.every(s => sel.has(s.id));
+  if ($('#cntPend')) { $('#cntPend').textContent = pend; $('#cntPend').hidden = !pend; }
+  if ($('#sKpis')) {
+    $('#sKpis').innerHTML = [
+      ['Recibidas en el mes', base.length, `${base.filter(s => s.tipo === 'alta').length} altas · ${base.filter(s => s.tipo === 'baja').length} bajas`],
+      ['Pendientes', cnt('pendiente'), `${base.filter(s => s.estado === 'pendiente' && s.alertas.length).length} con alertas`],
+      ['Válidas', cnt('valida'), 'Ya aplicadas al consolidado', 'ok'],
+      ['Inválidas', cnt('invalida'), 'Visibles para la empresa']
+    ].map(([l, v, d, c]) => `<div class="kpi ${c || ''}"><div class="l">${l}</div><div class="v">${numero(v)}</div><div class="d">${esc(d)}</div></div>`).join('');
+  }
+  if ($('#sTb')) {
+    $('#sTb').innerHTML = lista.map(s => `<tr class="click ${sel.has(s.id) ? 'sel' : ''}" data-id="${s.id}">
+      <td><input type="checkbox" data-sel="${s.id}" ${sel.has(s.id) ? 'checked' : ''} aria-label="Seleccionar ${s.id}"></td>
+      <td class="nw">${s.id}</td><td class="nw">${esc(fechaHora(s.recibido_en))}</td>
+      <td>${esc(s.empresa_nombre)}<small class="muted">NIT ${esc(s.empresa_nit)}</small></td>
+      <td><span class="tag ${s.tipo}">${s.tipo === 'alta' ? 'Alta' : 'Baja'}</span></td>
+      <td>${esc(s.titular_nombre)}<small class="muted">${esc(s.titular_num_doc)}</small></td>
+      <td>${esc(s.asistencia)} · ${esc(s.plan)}${s.mascota ? `<small class="muted">${esc(s.mascota)}</small>` : ''}</td>
+      <td class="num">${s.valor_mensual ? pesos(s.valor_mensual) : ''}<small class="muted" style="display:block">Mod. ${s.modelo_aplicado || 1}</small></td>
+      <td>${s.alertas.length ? s.alertas.map(a => `<span class="al">${esc(a.texto)}</span>`).join('') : '<span class="muted" style="font-size:12.5px">Sin alertas</span>'}</td>
+      <td><span class="tag ${s.estado}">${ESTADOS[s.estado]}</span>${s.estado === 'invalida' && s.motivo ? `<span class="motivo">${esc(s.motivo)}</span>` : ''}
+        ${s.validado_por_nombre ? `<small class="muted">${esc(s.validado_por_nombre)}</small>` : ''}</td></tr>`).join('');
+  }
+  const elVac = $('#sVacio');
+  if (elVac) {
+    elVac.hidden = lista.length > 0;
+    elVac.textContent = SOL.filas.length ? 'No hay solicitudes con esos filtros.' : `No llegaron solicitudes en ${nombreMes(SOL.periodo)}.`;
+  }
+  if ($('#sTodos')) $('#sTodos').checked = lista.length > 0 && lista.every(s => sel.has(s.id));
   pintarSeleccion();
 }
 function pintarSeleccion() {
-  $('#sSel').textContent = `${sel.size} seleccionada${sel.size === 1 ? '' : 's'}`;
-  ['#sValida', '#sInvalida', '#sPendiente'].forEach(b => $(b).disabled = !sel.size);
+  if ($('#sSel')) $('#sSel').textContent = `${sel.size} seleccionada${sel.size === 1 ? '' : 's'}`;
+  ['#sValida', '#sInvalida', '#sPendiente'].forEach(b => { const el = $(b); if (el) el.disabled = !sel.size; });
 }
 $('#sTb').addEventListener('click', e => {
   const cb = e.target.closest('[data-sel]');
@@ -82,22 +89,24 @@ const ETIQ = { fecha: 'Fecha', empresa: 'Empresa', nit: 'NIT', asesor: 'Asesor',
 const OCULTAR = new Set(['id_inscripcion', 'asistencia_id', 'plan_id', 'pago_id']);
 function verDetalle(id) {
   const s = SOL.filas.find(x => x.id === id); if (!s) return;
-  $('#dDetT').textContent = `Solicitud #${s.id} · ${s.tipo === 'alta' ? 'Alta' : 'Baja'}`;
+  if ($('#dDetT')) $('#dDetT').textContent = `Solicitud #${s.id} · ${s.tipo === 'alta' ? 'Alta' : 'Baja'}`;
   const campos = Object.entries(s.datos || {}).filter(([k, v]) => !OCULTAR.has(k) && String(v ?? '').trim() !== '');
-  $('#dDetB').innerHTML = `
-    ${s.alertas.length ? `<div class="notice warn"><strong>Validaciones automáticas</strong><ul>${s.alertas.map(a => `<li>${esc(a.texto)}</li>`).join('')}</ul></div>` : '<div class="notice ok">Sin alertas automáticas.</div>'}
-    ${s.estado === 'invalida' ? `<div class="notice bad"><strong>Inválida:</strong> ${esc(s.motivo)}</div>` : ''}
-    <div style="margin-bottom:12px;display:flex;gap:8px;">
-      ${s.archivo_pdf_id ? `<a href="/api/archivo?id=${s.archivo_pdf_id}" target="_blank" class="btn sec sm" style="text-decoration:none">📄 Descargar PDF</a>` : ''}
-      ${s.archivo_soporte_id ? `<a href="/api/archivo?id=${s.archivo_soporte_id}" target="_blank" class="btn sec sm" style="text-decoration:none">📎 Ver soporte</a>` : ''}
-    </div>
-    <dl class="det">
-      <dt>Empresa</dt><dd>${esc(s.empresa_nombre)} · NIT ${esc(s.empresa_nit)}</dd>
-      <dt>Asistencia</dt><dd>${esc(s.asistencia)} · ${esc(s.plan)}</dd>
-      <dt>Estado</dt><dd><span class="tag ${s.estado}">${ESTADOS[s.estado]}</span> ${s.validado_por_nombre ? esc('por ' + s.validado_por_nombre + ' · ' + fechaHora(s.validado_en)) : ''}</dd>
-      ${campos.map(([k, v]) => `<dt>${esc(ETIQ[k] || k.replace(/_/g, ' '))}</dt><dd>${esc(/^valor/.test(k) ? pesos(v) : v)}</dd>`).join('')}
-    </dl>`;
-  $('#dDet').showModal();
+  if ($('#dDetB')) {
+    $('#dDetB').innerHTML = `
+      ${s.alertas.length ? `<div class="notice warn"><strong>Validaciones automáticas</strong><ul>${s.alertas.map(a => `<li>${esc(a.texto)}</li>`).join('')}</ul></div>` : '<div class="notice ok">Sin alertas automáticas.</div>'}
+      ${s.estado === 'invalida' ? `<div class="notice bad"><strong>Inválida:</strong> ${esc(s.motivo)}</div>` : ''}
+      <div style="margin-bottom:12px;display:flex;gap:8px;">
+        ${s.archivo_pdf_id ? `<a href="/api/archivo?id=${s.archivo_pdf_id}" target="_blank" class="btn sec sm" style="text-decoration:none">📄 Descargar PDF</a>` : ''}
+        ${s.archivo_soporte_id ? `<a href="/api/archivo?id=${s.archivo_soporte_id}" target="_blank" class="btn sec sm" style="text-decoration:none">📎 Ver soporte</a>` : ''}
+      </div>
+      <dl class="det">
+        <dt>Empresa</dt><dd>${esc(s.empresa_nombre)} · NIT ${esc(s.empresa_nit)}</dd>
+        <dt>Asistencia</dt><dd>${esc(s.asistencia)} · ${esc(s.plan)}</dd>
+        <dt>Estado</dt><dd><span class="tag ${s.estado}">${ESTADOS[s.estado]}</span> ${s.validado_por_nombre ? esc('por ' + s.validado_por_nombre + ' · ' + fechaHora(s.validado_en)) : ''}</dd>
+        ${campos.map(([k, v]) => `<dt>${esc(ETIQ[k] || k.replace(/_/g, ' '))}</dt><dd>${esc(/^valor/.test(k) ? pesos(v) : v)}</dd>`).join('')}
+      </dl>`;
+  }
+  if ($('#dDet')) $('#dDet').showModal();
 }
 
 async function validar(estado, motivo) {
@@ -119,14 +128,20 @@ $('#sInvalida').addEventListener('click', () => {
   const textos = new Set(['Faltan datos obligatorios. Complete el formulario y envíelo de nuevo.', 'La persona ya tiene esta asistencia activa.',
     'Registro duplicado en el mes.', 'Falta la autorización de descuento por nómina firmada.']);
   [...sel].forEach(id => (SOL.filas.find(s => s.id === id)?.alertas || []).forEach(a => textos.add(a.texto)));
-  $('#iRapidos').innerHTML = [...textos].slice(0, 10).map(t => `<button type="button" class="btn sec sm" data-m="${esc(t)}">${esc(t)}</button>`).join('');
-  $('#iMotivo').value = ''; $('#iErr').hidden = true; $('#dInv').showModal(); $('#iMotivo').focus();
+  if ($('#iRapidos')) $('#iRapidos').innerHTML = [...textos].slice(0, 10).map(t => `<button type="button" class="btn sec sm" data-m="${esc(t)}">${esc(t)}</button>`).join('');
+  if ($('#iMotivo')) { $('#iMotivo').value = ''; }
+  if ($('#iErr')) $('#iErr').hidden = true;
+  if ($('#dInv')) { $('#dInv').showModal(); if ($('#iMotivo')) $('#iMotivo').focus(); }
 });
-$('#iRapidos').addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (!b) return; const m = $('#iMotivo'); m.value = (m.value.trim() ? m.value.trim() + ' ' : '') + b.dataset.m; });
+$('#iRapidos').addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (!b) return; const m = $('#iMotivo'); if (m) m.value = (m.value.trim() ? m.value.trim() + ' ' : '') + b.dataset.m; });
 $('#iOk').addEventListener('click', async () => {
 
-  try { await validar('invalida', $('#iMotivo').value.trim()); $('#dInv').close(); }
-  catch (x) { $('#iErr').textContent = x.message; $('#iErr').hidden = false; }
+  try {
+    const mot = $('#iMotivo') ? $('#iMotivo').value.trim() : '';
+    await validar('invalida', mot);
+    if ($('#dInv')) $('#dInv').close();
+  }
+  catch (x) { if ($('#iErr')) { $('#iErr').textContent = x.message; $('#iErr').hidden = false; } }
 });
 $('#sCsv').addEventListener('click', () => {
 
@@ -223,44 +238,54 @@ async function cargarConsolidado(pagina = 1) {
   CONSOLIDADO_STATE = d;
   CONS = d.filas; // Para compatibilidad con otras funciones
 
-  $('#cPortal').hidden = !eid;
-  if (eid) $('#cPortal').href = '/portal?empresa_id=' + eid;
+  if ($('#cPortal')) {
+    $('#cPortal').hidden = !eid;
+    if (eid) $('#cPortal').href = '/portal?empresa_id=' + eid;
+  }
 
   // Actualizar Banner de Modo Prueba / Producción
   const esPrueba = d.modo === 'test';
   const banner = $('#cModoBanner');
-  if (esPrueba) {
-    banner.className = 'notice warn';
-    banner.style.borderLeft = '4px solid var(--orange)';
-    $('#cModoTag').textContent = 'MODO PRUEBA ACTIVO';
-    $('#cModoDesc').innerHTML = 'Operando sobre tablas aisladas de prueba (<code>consolidado_conciliacion_test</code>). Los datos de producción NO se tocan.';
-    $('#cToggleModo').textContent = 'Cambiar a Producción';
-    $('#cToggleModo').style.background = '#173A8C';
-    $('#cToggleModo').style.borderColor = '#173A8C';
-    $('#cSembrar').hidden = false;
-    $('#cResetTest').hidden = false;
-  } else {
-    banner.className = 'notice bad';
-    banner.style.borderLeft = '4px solid var(--red)';
-    $('#cModoTag').textContent = 'MODO PRODUCCIÓN ACTIVO';
-    $('#cModoDesc').innerHTML = '<strong>ATENCIÓN:</strong> Operando sobre tablas oficiales de producción (<code>consolidado_conciliacion</code>).';
-    $('#cToggleModo').textContent = 'Cambiar a Modo Prueba';
-    $('#cToggleModo').style.background = 'var(--muted)';
-    $('#cToggleModo').style.borderColor = 'var(--muted)';
-    $('#cSembrar').hidden = true;
-    $('#cResetTest').hidden = true;
+  if (banner) {
+    if (esPrueba) {
+      banner.className = 'notice warn';
+      banner.style.borderLeft = '4px solid var(--orange)';
+      if ($('#cModoTag')) $('#cModoTag').textContent = 'MODO PRUEBA ACTIVO';
+      if ($('#cModoDesc')) $('#cModoDesc').innerHTML = 'Operando sobre tablas aisladas de prueba (<code>consolidado_conciliacion_test</code>). Los datos de producción NO se tocan.';
+      if ($('#cToggleModo')) {
+        $('#cToggleModo').textContent = 'Cambiar a Producción';
+        $('#cToggleModo').style.background = '#173A8C';
+        $('#cToggleModo').style.borderColor = '#173A8C';
+      }
+      if ($('#cSembrar')) $('#cSembrar').hidden = false;
+      if ($('#cResetTest')) $('#cResetTest').hidden = false;
+    } else {
+      banner.className = 'notice bad';
+      banner.style.borderLeft = '4px solid var(--red)';
+      if ($('#cModoTag')) $('#cModoTag').textContent = 'MODO PRODUCCIÓN ACTIVO';
+      if ($('#cModoDesc')) $('#cModoDesc').innerHTML = '<strong>ATENCIÓN:</strong> Operando sobre tablas oficiales de producción (<code>consolidado_conciliacion</code>).';
+      if ($('#cToggleModo')) {
+        $('#cToggleModo').textContent = 'Cambiar a Modo Prueba';
+        $('#cToggleModo').style.background = 'var(--muted)';
+        $('#cToggleModo').style.borderColor = 'var(--muted)';
+      }
+      if ($('#cSembrar')) $('#cSembrar').hidden = true;
+      if ($('#cResetTest')) $('#cResetTest').hidden = true;
+    }
   }
 
   // KPIs
   const k = d.kpis || {};
-  $('#cKpis').innerHTML = [
-    ['Suscripciones totales', numero(k.total || 0), `${numero(k.personas_unicas || 0)} personas`],
-    ['Activas', numero(k.activas || 0), 'Cobran en el mes', 'ok'],
-    ['Inactivas', numero(k.inactivas || 0), 'Retiradas'],
-    ['Pendientes de XC', numero(k.pendientes_xc || 0), k.pendientes_xc ? 'Requieren código XC' : 'Al día', k.pendientes_xc ? 'hl' : ''],
-    ['Personas con >1 asistencia', numero(k.personas_multi_asistencia || 0), 'Suscripciones múltiples'],
-    ['Valor mensual activo', pesos(k.valor_total_activo || 0), 'Con IVA']
-  ].map(([l, v, d2, c]) => `<div class="kpi ${c || ''}"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="d">${esc(d2)}</div></div>`).join('');
+  if ($('#cKpis')) {
+    $('#cKpis').innerHTML = [
+      ['Suscripciones totales', numero(k.total || 0), `${numero(k.personas_unicas || 0)} personas`],
+      ['Activas', numero(k.activas || 0), 'Cobran en el mes', 'ok'],
+      ['Inactivas', numero(k.inactivas || 0), 'Retiradas'],
+      ['Pendientes de XC', numero(k.pendientes_xc || 0), k.pendientes_xc ? 'Requieren código XC' : 'Al día', k.pendientes_xc ? 'hl' : ''],
+      ['Personas con >1 asistencia', numero(k.personas_multi_asistencia || 0), 'Suscripciones múltiples'],
+      ['Valor mensual activo', pesos(k.valor_total_activo || 0), 'Con IVA']
+    ].map(([l, v, d2, c]) => `<div class="kpi ${c || ''}"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="d">${esc(d2)}</div></div>`).join('');
+  }
 
   pintarConsolidado();
 }
@@ -272,13 +297,13 @@ function pintarConsolidado() {
 
   // Paginación
   const hayPags = d.total_paginas > 1;
-  $('#cPaginacion').hidden = !hayPags;
+  if ($('#cPaginacion')) $('#cPaginacion').hidden = !hayPags;
   if (hayPags) {
-    $('#cPagTxt').textContent = `Pág. ${d.pagina} de ${d.total_paginas} (${numero(d.total)} suscripciones)`;
-    $('#cPagAnt').disabled = d.pagina <= 1;
-    $('#cPagSig').disabled = d.pagina >= d.total_paginas;
+    if ($('#cPagTxt')) $('#cPagTxt').textContent = `Pág. ${d.pagina} de ${d.total_paginas} (${numero(d.total)} suscripciones)`;
+    if ($('#cPagAnt')) $('#cPagAnt').disabled = d.pagina <= 1;
+    if ($('#cPagSig')) $('#cPagSig').disabled = d.pagina >= d.total_paginas;
   }
-  $('#cCuenta').textContent = `${numero(d.total)} suscripciones en total (${numero(d.kpis?.activas || 0)} activas)${hayPags ? ` · Página ${d.pagina} de ${d.total_paginas}` : ''}`;
+  if ($('#cCuenta')) $('#cCuenta').textContent = `${numero(d.total)} suscripciones en total (${numero(d.kpis?.activas || 0)} activas)${hayPags ? ` · Página ${d.pagina} de ${d.total_paginas}` : ''}`;
 
   // Encabezados dinámicos
   let ths = `
@@ -919,29 +944,27 @@ $('#cCierre').addEventListener('click', () => {
 });
 
 $('#cierreOk').addEventListener('click', async () => {
-  const per = $('#cierrePeriodo').value;
+  const per = $('#cierrePeriodo') ? $('#cierrePeriodo').value : '';
   if (!per || !/^\d{4}-\d{2}$/.test(per)) {
-    $('#cierreErr').textContent = 'Seleccione un periodo válido en formato AAAA-MM.';
-    $('#cierreErr').hidden = false;
+    if ($('#cierreErr')) { $('#cierreErr').textContent = 'Seleccione un periodo válido en formato AAAA-MM.'; $('#cierreErr').hidden = false; }
     return;
   }
 
   if (!confirm(`¿Ejecutar el cierre mensual para el periodo ${per} (${clientEtiquetaPeriodo(per)})?\n\nSe generará el valor cobrado para todas las suscripciones activas.`)) return;
 
   try {
-    $('#cierreOk').disabled = true;
+    if ($('#cierreOk')) $('#cierreOk').disabled = true;
     const r = await api('/api/admin', {
       method: 'POST',
       body: { accion: 'consolidado_conciliacion_cierre_mensual', periodo: per }
     });
     toast(r.mensaje);
-    $('#dCierre').close();
+    if ($('#dCierre')) $('#dCierre').close();
     await cargarConsolidado(1);
   } catch (x) {
-    $('#cierreErr').textContent = x.message;
-    $('#cierreErr').hidden = false;
+    if ($('#cierreErr')) { $('#cierreErr').textContent = x.message; $('#cierreErr').hidden = false; }
   } finally {
-    $('#cierreOk').disabled = false;
+    if ($('#cierreOk')) $('#cierreOk').disabled = false;
   }
 });
 
@@ -949,22 +972,21 @@ $('#cierreOk').addEventListener('click', async () => {
 let EDIT_XC_RECORD_ID = null;
 window.abrirEdicionXc = function(id, nombre, doc, asistencia) {
   EDIT_XC_RECORD_ID = id;
-  $('#editXcDetalle').innerHTML = `Titular: <strong>${esc(nombre)}</strong><br>Documento: <strong>${esc(doc)}</strong> · Asistencia: <strong>${esc(asistencia)}</strong>`;
-  $('#editXcInput').value = '';
-  $('#editXcErr').hidden = true;
-  $('#dEditXcModal').showModal();
+  if ($('#editXcDetalle')) $('#editXcDetalle').innerHTML = `Titular: <strong>${esc(nombre)}</strong><br>Documento: <strong>${esc(doc)}</strong> · Asistencia: <strong>${esc(asistencia)}</strong>`;
+  if ($('#editXcInput')) $('#editXcInput').value = '';
+  if ($('#editXcErr')) $('#editXcErr').hidden = true;
+  if ($('#dEditXcModal')) $('#dEditXcModal').showModal();
 };
 
 $('#editXcOk').addEventListener('click', async () => {
-  const codigo = $('#editXcInput').value.trim();
+  const codigo = $('#editXcInput') ? $('#editXcInput').value.trim() : '';
   if (!codigo) {
-    $('#editXcErr').textContent = 'Ingrese el código XC_SUBSCRIPTIONNAME__C.';
-    $('#editXcErr').hidden = false;
+    if ($('#editXcErr')) { $('#editXcErr').textContent = 'Ingrese el código XC_SUBSCRIPTIONNAME__C.'; $('#editXcErr').hidden = false; }
     return;
   }
 
   try {
-    $('#editXcOk').disabled = true;
+    if ($('#editXcOk')) $('#editXcOk').disabled = true;
     await api('/api/admin', {
       method: 'POST',
       body: {
@@ -974,13 +996,12 @@ $('#editXcOk').addEventListener('click', async () => {
       }
     });
     toast('Código XC asignado con éxito.');
-    $('#dEditXcModal').close();
+    if ($('#dEditXcModal')) $('#dEditXcModal').close();
     await cargarConsolidado(CONSOLIDADO_PAGINA);
   } catch (x) {
-    $('#editXcErr').textContent = x.message;
-    $('#editXcErr').hidden = false;
+    if ($('#editXcErr')) { $('#editXcErr').textContent = x.message; $('#editXcErr').hidden = false; }
   } finally {
-    $('#editXcOk').disabled = false;
+    if ($('#editXcOk')) $('#editXcOk').disabled = false;
   }
 });
 
@@ -1033,7 +1054,7 @@ $('#xcOk').addEventListener('click', async () => {
   // Si hay archivo masivo
   if (XC_MASIVO_FILAS.length) {
     try {
-      $('#xcOk').disabled = true;
+      if ($('#xcOk')) $('#xcOk').disabled = true;
       const r = await api('/api/admin', {
         method: 'POST',
         body: {
@@ -1042,23 +1063,22 @@ $('#xcOk').addEventListener('click', async () => {
         }
       });
       toast(`Cruce completado: ${r.actualizados} registros actualizados con su código XC.`);
-      $('#dXc').close();
+      if ($('#dXc')) $('#dXc').close();
       await cargarConsolidado(CONSOLIDADO_PAGINA);
     } catch (x) {
-      $('#xcErr').textContent = x.message;
-      $('#xcErr').hidden = false;
+      if ($('#xcErr')) { $('#xcErr').textContent = x.message; $('#xcErr').hidden = false; }
     } finally {
-      $('#xcOk').disabled = false;
+      if ($('#xcOk')) $('#xcOk').disabled = false;
     }
     return;
   }
 
   // O edición manual
-  const doc = $('#xcDocManual').value.trim();
-  const cod = $('#xcCodManual').value.trim();
+  const doc = $('#xcDocManual') ? $('#xcDocManual').value.trim() : '';
+  const cod = $('#xcCodManual') ? $('#xcCodManual').value.trim() : '';
   if (doc && cod) {
     try {
-      $('#xcOk').disabled = true;
+      if ($('#xcOk')) $('#xcOk').disabled = true;
       const r = await api('/api/admin', {
         method: 'POST',
         body: {
@@ -1068,19 +1088,20 @@ $('#xcOk').addEventListener('click', async () => {
         }
       });
       toast(`Actualizado: ${r.actualizados} registro(s) asignados con el código XC.`);
-      $('#dXc').close();
+      if ($('#dXc')) $('#dXc').close();
       await cargarConsolidado(CONSOLIDADO_PAGINA);
     } catch (x) {
-      $('#xcErr').textContent = x.message;
-      $('#xcErr').hidden = false;
+      if ($('#xcErr')) { $('#xcErr').textContent = x.message; $('#xcErr').hidden = false; }
     } finally {
-      $('#xcOk').disabled = false;
+      if ($('#xcOk')) $('#xcOk').disabled = false;
     }
     return;
   }
 
-  $('#xcErr').textContent = 'Suba un archivo con cruce o complete el documento y código manual.';
-  $('#xcErr').hidden = false;
+  if ($('#xcErr')) {
+    $('#xcErr').textContent = 'Suba un archivo con cruce o complete el documento y código manual.';
+    $('#xcErr').hidden = false;
+  }
 });
 
 /* ==================== ALTAS MASIVAS ==================== */
@@ -1168,17 +1189,22 @@ async function cargarEmpresas() {
 let empEdit = null;
 function abrirEmpresa(e) {
   empEdit = e || null;
-  $('#dEmpT').textContent = e ? 'Editar empresa' : 'Nueva empresa';
-  $('#eNombre').value = e ? e.nombre : ''; $('#eNit').value = e ? e.nit : '';
-  $('#eModelo').value = e ? e.modelo : 1; $('#eActiva').checked = e ? e.activa : true;
+  if ($('#dEmpT')) $('#dEmpT').textContent = e ? 'Editar empresa' : 'Nueva empresa';
+  if ($('#eNombre')) $('#eNombre').value = e ? e.nombre : '';
+  if ($('#eNit')) $('#eNit').value = e ? e.nit : '';
+  if ($('#eModelo')) $('#eModelo').value = e ? e.modelo : 1;
+  if ($('#eActiva')) $('#eActiva').checked = e ? e.activa : true;
   // Cargar dominios en el textarea
   const doms = (e && Array.isArray(e.dominios)) ? e.dominios : [];
-  $('#eDominios').value = doms.join('\n');
+  if ($('#eDominios')) $('#eDominios').value = doms.join('\n');
   const on = e && e.productos.length ? new Set(e.productos) : new Set(PRODUCTOS.map(p => p.clave));
   let grupo = '';
-  $('#eProds').innerHTML = PRODUCTOS.map(p => { const h = p.asistencia !== grupo ? `<h4>${esc(p.asistencia)}</h4>` : ''; grupo = p.asistencia;
-    return `${h}<label><input type="checkbox" value="${p.clave}" ${on.has(p.clave) ? 'checked' : ''}> ${esc(p.plan)}</label>`; }).join('');
-  $('#eErr').hidden = true; $('#dEmp').showModal();
+  if ($('#eProds')) {
+    $('#eProds').innerHTML = PRODUCTOS.map(p => { const h = p.asistencia !== grupo ? `<h4>${esc(p.asistencia)}</h4>` : ''; grupo = p.asistencia;
+      return `${h}<label><input type="checkbox" value="${p.clave}" ${on.has(p.clave) ? 'checked' : ''}> ${esc(p.plan)}</label>`; }).join('');
+  }
+  if ($('#eErr')) $('#eErr').hidden = true;
+  if ($('#dEmp')) $('#dEmp').showModal();
 }
 $('#eNueva').addEventListener('click', () => abrirEmpresa());
 $('#eTb').addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (b) abrirEmpresa(EMPRESAS.find(x => x.id === +b.dataset.edit)); });
@@ -1187,14 +1213,17 @@ $('#eNinguno').addEventListener('click', () => $$('#eProds input').forEach(i => 
 $('#eOk').addEventListener('click', async () => {
 
   const productos = $$('#eProds input:checked').map(i => i.value);
-  if (!productos.length) { $('#eErr').textContent = 'Habilite al menos un producto.'; $('#eErr').hidden = false; return; }
+  if (!productos.length) {
+    if ($('#eErr')) { $('#eErr').textContent = 'Habilite al menos un producto.'; $('#eErr').hidden = false; }
+    return;
+  }
   try {
     await api('/api/admin', { method: 'POST', body: { accion: 'empresa_guardar', id: empEdit && empEdit.id,
       nombre: $('#eNombre').value, nit: $('#eNit').value,
       modelo: +$('#eModelo').value, activa: $('#eActiva').checked,
       productos: productos.length === PRODUCTOS.length ? [] : productos } });
     // Guardar dominios si se especificaron
-    const domTexto = $('#eDominios').value.trim();
+    const domTexto = $('#eDominios') ? $('#eDominios').value.trim() : '';
     const domList = domTexto ? domTexto.split('\n').map(d => d.trim()).filter(Boolean) : [];
     if (empEdit || domList.length) {
       // Obtener el ID de la empresa recién creada o editada
@@ -1205,8 +1234,12 @@ $('#eOk').addEventListener('click', async () => {
         catch (dx) { toast('Empresa guardada, pero error en dominios: ' + dx.message); }
       }
     }
-    $('#dEmp').close(); toast('Empresa guardada.'); cargarEmpresas();
-  } catch (x) { $('#eErr').textContent = x.message; $('#eErr').hidden = false; }
+    if ($('#dEmp')) $('#dEmp').close();
+    toast('Empresa guardada.');
+    cargarEmpresas();
+  } catch (x) {
+    if ($('#eErr')) { $('#eErr').textContent = x.message; $('#eErr').hidden = false; }
+  }
 });
 
 /* ==================== USUARIOS ==================== */
@@ -1214,27 +1247,37 @@ const ROLES = { maestro: 'Maestro', validador: 'Validador', empresa_admin: 'Empr
 async function cargarUsuarios() {
   if (!EMPRESAS.length) await cargarEmpresas();
   USUARIOS = (await api('/api/admin', { method: 'POST', body: { accion: 'usuarios' } })).filas;
-  $('#uTb').innerHTML = USUARIOS.map(u => `<tr><td>${esc(u.nombre)}</td><td>${esc(u.email)}</td><td>${ROLES[u.rol]}</td><td>${esc(u.empresa_nombre || '—')}</td>
-    <td class="nw">${u.ultimo_ingreso ? esc(fechaHora(u.ultimo_ingreso)) : '<span class="muted">Nunca</span>'}</td>
-    <td>${u.activo ? '<span class="tag valida">Activo</span>' : '<span class="tag invalida">Inactivo</span>'}</td>
-    <td class="nw"><button type="button" class="lnk" data-uedit="${u.id}">Editar</button> · <button type="button" class="lnk" data-uclave="${u.id}">Nueva contraseña</button></td></tr>`).join('');
+  if ($('#uTb')) {
+    $('#uTb').innerHTML = USUARIOS.map(u => `<tr><td>${esc(u.nombre)}</td><td>${esc(u.email)}</td><td>${ROLES[u.rol]}</td><td>${esc(u.empresa_nombre || '—')}</td>
+      <td class="nw">${u.ultimo_ingreso ? esc(fechaHora(u.ultimo_ingreso)) : '<span class="muted">Nunca</span>'}</td>
+      <td>${u.activo ? '<span class="tag valida">Activo</span>' : '<span class="tag invalida">Inactivo</span>'}</td>
+      <td class="nw"><button type="button" class="lnk" data-uedit="${u.id}">Editar</button> · <button type="button" class="lnk" data-uclave="${u.id}">Nueva contraseña</button></td></tr>`).join('');
+  }
 }
 let usuEdit = null;
 function abrirUsuario(u) {
   usuEdit = u || null;
-  $('#dUsuT').textContent = u ? 'Editar usuario' : 'Nuevo usuario';
-  $('#uNombre').value = u ? u.nombre : ''; $('#uEmail').value = u ? u.email : '';
-  $('#uRol').value = u ? u.rol : 'empresa_usuario';
-  $('#uEmpresa').value = u && u.empresa_id ? u.empresa_id : ''; $('#uActivo').checked = u ? u.activo : true;
-  $('#uExcepcionDominio').checked = false;
-  const esDeEmpresa = ['empresa_admin', 'empresa_usuario'].includes($('#uRol').value);
-  $('#uEmpWrap').hidden = !esDeEmpresa; $('#uErr').hidden = true; $('#dUsu').showModal();
+  if ($('#dUsuT')) $('#dUsuT').textContent = u ? 'Editar usuario' : 'Nuevo usuario';
+  if ($('#uNombre')) $('#uNombre').value = u ? u.nombre : '';
+  if ($('#uEmail')) $('#uEmail').value = u ? u.email : '';
+  if ($('#uRol')) $('#uRol').value = u ? u.rol : 'empresa_usuario';
+  if ($('#uEmpresa')) $('#uEmpresa').value = u && u.empresa_id ? u.empresa_id : '';
+  if ($('#uActivo')) $('#uActivo').checked = u ? u.activo : true;
+  if ($('#uExcepcionDominio')) $('#uExcepcionDominio').checked = false;
+  const esDeEmpresa = ['empresa_admin', 'empresa_usuario'].includes($('#uRol') ? $('#uRol').value : '');
+  if ($('#uEmpWrap')) $('#uEmpWrap').hidden = !esDeEmpresa;
+  if ($('#uErr')) $('#uErr').hidden = true;
+  if ($('#dUsu')) $('#dUsu').showModal();
 }
-function mostrarClave(txt, clave) { $('#ctTxt').textContent = txt; $('#ctClave').textContent = clave; $('#dClaveT').showModal(); }
-$('#ctCopiar').addEventListener('click', () => navigator.clipboard.writeText($('#ctClave').textContent).then(() => toast('Copiada.')));
-$('#uRol').addEventListener('change', () => { const esEmp = ['empresa_admin', 'empresa_usuario'].includes($('#uRol').value); $('#uEmpWrap').hidden = !esEmp; });
-$('#uNuevo').addEventListener('click', () => abrirUsuario());
-$('#uTb').addEventListener('click', async e => {
+function mostrarClave(txt, clave) {
+  if ($('#ctTxt')) $('#ctTxt').textContent = txt;
+  if ($('#ctClave')) $('#ctClave').textContent = clave;
+  if ($('#dClaveT')) $('#dClaveT').showModal();
+}
+if ($('#ctCopiar')) $('#ctCopiar').addEventListener('click', () => navigator.clipboard.writeText($('#ctClave') ? $('#ctClave').textContent : '').then(() => toast('Copiada.')));
+if ($('#uRol')) $('#uRol').addEventListener('change', () => { const esEmp = ['empresa_admin', 'empresa_usuario'].includes($('#uRol').value); if ($('#uEmpWrap')) $('#uEmpWrap').hidden = !esEmp; });
+if ($('#uNuevo')) $('#uNuevo').addEventListener('click', () => abrirUsuario());
+if ($('#uTb')) $('#uTb').addEventListener('click', async e => {
 
   const ed = e.target.closest('[data-uedit]'); if (ed) return abrirUsuario(USUARIOS.find(u => u.id === +ed.dataset.uedit));
   const cl = e.target.closest('[data-uclave]'); if (!cl) return;
@@ -1243,16 +1286,19 @@ $('#uTb').addEventListener('click', async e => {
   try { const r = await api('/api/admin', { method: 'POST', body: { accion: 'usuario_clave', id: u.id } }); mostrarClave(`Nueva contraseña de ${u.nombre} (${u.email}):`, r.clave_temporal); }
   catch (x) { toast(x.message); }
 });
-$('#uOk').addEventListener('click', async () => {
+if ($('#uOk')) $('#uOk').addEventListener('click', async () => {
 
   try {
     const r = await api('/api/admin', { method: 'POST', body: { accion: 'usuario_guardar', id: usuEdit && usuEdit.id,
       nombre: $('#uNombre').value, email: $('#uEmail').value,
       rol: $('#uRol').value, empresa_id: $('#uEmpresa').value || undefined,
       activo: $('#uActivo').checked, excepcion_dominio: $('#uExcepcionDominio').checked } });
-    $('#dUsu').close(); cargarUsuarios();
+    if ($('#dUsu')) $('#dUsu').close();
+    cargarUsuarios();
     if (r.clave_temporal) mostrarClave(`Usuario creado: ${$('#uEmail').value}. Contraseña temporal:`, r.clave_temporal); else toast('Usuario guardado.');
-  } catch (x) { $('#uErr').textContent = x.message; $('#uErr').hidden = false; }
+  } catch (x) {
+    if ($('#uErr')) { $('#uErr').textContent = x.message; $('#uErr').hidden = false; }
+  }
 });
 
 /* ==================== INICIO ==================== */
@@ -1266,7 +1312,14 @@ $('#uOk').addEventListener('click', async () => {
     else await cargarEmpresas();
     pintarSelectEmpresas();
     await cargarSolicitudes();
-    $('#cargando').hidden = true; $('#app').hidden = false;
+    if ($('#cargando')) $('#cargando').hidden = true;
+    if ($('#app')) $('#app').hidden = false;
     if (esMaestro() && !EMPRESAS.length) { abrirTab('empresas'); toast('Empiece creando la primera empresa.'); }
-  } catch (x) { $('#cargando').hidden = true; $('#errorCarga').textContent = x.message; $('#errorCarga').hidden = false; }
+  } catch (x) {
+    if ($('#cargando')) $('#cargando').hidden = true;
+    if ($('#errorCarga')) {
+      $('#errorCarga').textContent = x.message;
+      $('#errorCarga').hidden = false;
+    }
+  }
 })();

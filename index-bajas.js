@@ -64,9 +64,9 @@
     if(!libres) box.insertAdjacentHTML('beforeend', '<div class="notice info" style="margin:8px 0 0">Todas sus asistencias ya tienen una baja pendiente de validación. No hay nada más que enviar.</div>');
     el('bajaDatos').hidden = !libres; actualizarTotal();
   }
-  function elegidas(){ return [...el('bajaResultados').querySelectorAll('input[type=checkbox]:checked')].map(i => +i.value); }
+  function elegidas(){ return [...el('bajaResultados').querySelectorAll('input[type=checkbox]:checked')].map(i => i.value); }
   function actualizarTotal(){
-    const ids = elegidas(), v = encontradas.filter(a => ids.includes(a.id)).reduce((s, a) => s + (a.valor_mensual || 0), 0);
+    const ids = elegidas(), v = encontradas.filter(a => ids.includes(String(a.id))).reduce((s, a) => s + (a.valor_mensual || 0), 0);
     el('bajaTotal').textContent = ids.length ? `${ids.length} asistencia${ids.length > 1 ? 's' : ''} · deja de pagar ${pesos(v) || '$0'} al mes` : 'Seleccione al menos una asistencia';
     el('bajaTotal').className = 'total ' + (ids.length ? 'ok' : '');
   }
@@ -100,7 +100,7 @@
       const d = await r.json().catch(() => ({}));
       if(r.status === 401) throw new Error('Su sesión terminó. Ingrese de nuevo.');
       if(!r.ok) throw new Error(d.error || 'No se pudo registrar la baja.');
-      const nombres = encontradas.filter(a => ids.includes(a.id)).map(a => a.asistencia + ' ' + a.plan).join(', ');
+      const nombres = encontradas.filter(a => ids.includes(String(a.id))).map(a => a.asistencia + (a.plan ? ' ' + a.plan : '')).join(', ');
       el('bajaOk').innerHTML = `<strong>Baja registrada y pendiente de validación.</strong> ${esc(encontradas[0].titular_nombre)} (${esc(docBuscado)}): ${esc(nombres)}.
         <a href="${['empresa_admin','empresa_usuario'].includes(SESION.usuario.rol) ? '/portal' : '/admin'}">Ver en el panel</a>`;
       el('bajaOk').hidden = false; limpiar(); toast('Solicitud de baja registrada.'); window.scrollTo(0, 0);

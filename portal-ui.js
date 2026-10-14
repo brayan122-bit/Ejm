@@ -14,78 +14,105 @@ async function cargar(periodo) {
 }
 
 function pintar() {
-  const e = D.empresa, r = D.resumen;
-  $('#empresaNombre').textContent = e.nombre;
-  $('#empresaNit').textContent = e.nit ? `NIT ${e.nit}` : '';
+  const e = D.empresa || {}, r = D.resumen || {};
+  const elNom = $('#empresaNombre') || $('#titEmpresa');
+  if (elNom) elNom.textContent = e.nombre || '';
+  const elNit = $('#empresaNit') || $('#subEmpresa');
+  if (elNit) elNit.textContent = e.nit ? `NIT ${e.nit}` : '';
 
-  $('#periodo').innerHTML = D.periodos.map(p => `<option value="${p}" ${p === D.periodo ? 'selected' : ''}>${esc(nombreMes(p))}${p === D.periodo_actual ? ' (actual)' : ''}</option>`).join('');
+  if ($('#periodo')) {
+    $('#periodo').innerHTML = (D.periodos || []).map(p => `<option value="${p}" ${p === D.periodo ? 'selected' : ''}>${esc(nombreMes(p))}${p === D.periodo_actual ? ' (actual)' : ''}</option>`).join('');
+  }
 
   const k = [
-    ['Total personas activas', numero(r.personas_activas), 'En el consolidado', ''],
-    ['Total asistencias', numero(r.asistencias), 'Planes asignados', ''],
-    ['Valor mensual total', pesos(r.valor_total), 'Costo del mes', ''],
+    ['Total personas activas', numero(r.personas_activas ?? r.personas ?? r.titulares ?? 0), 'En el consolidado', ''],
+    ['Total asistencias', numero(r.asistencias || 0), 'Planes asignados', ''],
+    ['Valor mensual total', pesos(r.valor_total || 0), 'Costo del mes', ''],
   ];
-  if (r.valor_empresa > 0 || r.valor_colaborador > 0) {
+  if ((r.valor_empresa || 0) > 0 || (r.valor_colaborador || 0) > 0) {
     k.push(
-      ['Aporte empresa', pesos(r.valor_empresa), 'Asume la empresa', ''],
-      ['Aporte colaboradores', pesos(r.valor_colaborador), 'Descuento nómina', '']
+      ['Aporte empresa', pesos(r.valor_empresa || 0), 'Asume la empresa', ''],
+      ['Aporte colaboradores', pesos(r.valor_colaborador || 0), 'Descuento nómina', '']
     );
   }
-  if (r.pendientes > 0) {
+  if ((r.pendientes || 0) > 0) {
     k.push(['Pendientes de validar', numero(r.pendientes), 'En revisión por el equipo', 'warn']);
   }
-  $('#kpis').innerHTML = k.map(([l, v, d, c]) => `<div class="kpi ${c || ''}"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="d">${esc(d)}</div></div>`).join('');
+  if ($('#kpis')) {
+    $('#kpis').innerHTML = k.map(([l, v, d, c]) => `<div class="kpi ${c || ''}"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="d">${esc(d)}</div></div>`).join('');
+  }
 
-  $('#tbProductos').innerHTML = r.por_producto.map(p => `<tr><td>${esc(p.asistencia)}</td><td>${esc(p.plan)}</td>
-    <td class="num">${numero(p.cantidad)}</td><td class="num">${pesos(p.valor)}</td></tr>`).join('');
-  $('#tfProductos').innerHTML = r.por_producto.length ? `<tr><td colspan="2">Total</td><td class="num">${numero(r.asistencias)}</td><td class="num">${pesos(r.valor_total)}</td></tr>` : '';
+  if ($('#tbProductos')) {
+    $('#tbProductos').innerHTML = (r.por_producto || []).map(p => `<tr><td>${esc(p.asistencia)}</td><td>${esc(p.plan)}</td>
+      <td class="num">${numero(p.cantidad)}</td><td class="num">${pesos(p.valor)}</td></tr>`).join('');
+  }
+  if ($('#tfProductos')) {
+    $('#tfProductos').innerHTML = (r.por_producto && r.por_producto.length) ? `<tr><td colspan="2">Total</td><td class="num">${numero(r.asistencias)}</td><td class="num">${pesos(r.valor_total)}</td></tr>` : '';
+  }
 
-  const pend = D.solicitudes.filter(s => s.estado === 'pendiente');
-  if (pend.length) {
-    $('#cardPend').innerHTML = `<h3>Novedades de ${esc(nombreMes(D.periodo))} pendientes de validación</h3>
-      <p class="sub">Estas solicitudes fueron registradas pero aún no se reflejan en el consolidado porque están siendo verificadas.</p>
-      <div class="grid3">${pend.slice(0, 6).map(s => `<div>
-        <strong>${esc(s.titular_nombre)}</strong><br>
-        <span class="muted">${esc(s.asistencia)} · ${esc(s.plan)}</span><br>
-        <span class="tag warn">${s.tipo === 'alta' ? 'Alta' : 'Baja'} · Pendiente</span>
-      </div>`).join('')}</div>
-      ${pend.length > 6 ? `<p class="muted" style="margin:10px 0 0;font-size:12px">Y ${pend.length - 6} más. Mírelas todas en la pestaña «Solicitudes».</p>` : ''}`;
-    $('#cardPend').hidden = false;
-  } else { $('#cardPend').hidden = true; }
+  const pend = (D.solicitudes || []).filter(s => s.estado === 'pendiente');
+  if ($('#cardPend')) {
+    if (pend.length) {
+      $('#cardPend').innerHTML = `<h3>Novedades de ${esc(nombreMes(D.periodo))} pendientes de validación</h3>
+        <p class="sub">Estas solicitudes fueron registradas pero aún no se reflejan en el consolidado porque están siendo verificadas.</p>
+        <div class="grid3">${pend.slice(0, 6).map(s => `<div>
+          <strong>${esc(s.titular_nombre)}</strong><br>
+          <span class="muted">${esc(s.asistencia)} · ${esc(s.plan)}</span><br>
+          <span class="tag warn">${s.tipo === 'alta' ? 'Alta' : 'Baja'} · Pendiente</span>
+        </div>`).join('')}</div>
+        ${pend.length > 6 ? `<p class="muted" style="margin:10px 0 0;font-size:12px">Y ${pend.length - 6} más. Mírelas todas en la pestaña «Solicitudes».</p>` : ''}`;
+      $('#cardPend').hidden = false;
+    } else {
+      $('#cardPend').hidden = true;
+    }
+  }
 
-  const inv = D.solicitudes.filter(s => s.estado === 'invalida');
-  $('#avisoInvalidos').innerHTML = inv.length ? `<div class="notice bad"><strong>Tiene ${inv.length} registro${inv.length > 1 ? 's' : ''} por corregir en ${esc(nombreMes(D.periodo))}.</strong>
-    Revise la pestaña «Solicitudes» con el filtro «Inválida» para ver el motivo y volver a registrarlos.</div>` : '';
+  const inv = (D.solicitudes || []).filter(s => s.estado === 'invalida');
+  if ($('#avisoInvalidos')) {
+    $('#avisoInvalidos').innerHTML = inv.length ? `<div class="notice bad"><strong>Tiene ${inv.length} registro${inv.length > 1 ? 's' : ''} por corregir en ${esc(nombreMes(D.periodo))}.</strong>
+      Revise la pestaña «Solicitudes» con el filtro «Inválida» para ver el motivo y volver a registrarlos.</div>` : '';
+  }
 
   pintarPersonas();
   pintarSolicitudes();
 }
 
 function pintarPersonas() {
-  const q = ($('#qPersonas').value || '').toLowerCase().trim();
-  const lista = D.consolidado.filter(c => !q ||
+  const q = ($('#qPersonas') ? $('#qPersonas').value : '').toLowerCase().trim();
+  const cons = D.consolidado || [];
+  const lista = cons.filter(c => !q ||
     (c.titular_nombre || '').toLowerCase().includes(q) ||
     (c.titular_num_doc || '').toLowerCase().includes(q) ||
     (c.asistencia || '').toLowerCase().includes(q) ||
     (c.plan || '').toLowerCase().includes(q)
   );
-  $('#tbPersonas').innerHTML = lista.map(c => `<tr>
-    <td><strong>${esc(c.titular_nombre)}</strong></td>
-    <td class="nw">${esc(c.titular_num_doc)}</td>
-    <td>${esc(c.asistencia)}</td>
-    <td>${esc(c.plan)}</td>
-    <td>${esc(c.mascota || '—')}</td>
-    <td class="num">${c.personas}</td>
-    <td class="num">${pesos(c.valor_mensual)}</td>
-    <td class="nw">${c.fecha_alta || '—'}</td>
-  </tr>`).join('');
-  $('#vacioPersonas').textContent = D.consolidado.length ? 'No hay personas con ese filtro.' : 'No hay personas registradas en esta empresa.';
+  if ($('#tbPersonas')) {
+    $('#tbPersonas').innerHTML = lista.map(c => `<tr>
+      <td><strong>${esc(c.titular_nombre)}</strong></td>
+      <td class="nw">${esc(c.titular_num_doc)}</td>
+      <td>${esc(c.asistencia)}</td>
+      <td>${esc(c.plan)}</td>
+      <td>${esc(c.mascota || '—')}</td>
+      <td class="num">${c.personas || 1}</td>
+      <td class="num">${pesos(c.valor_mensual)}</td>
+      <td class="nw">${esc(c.fecha_alta || '—')}</td>
+    </tr>`).join('');
+  }
+  if ($('#cuentaPersonas')) {
+    $('#cuentaPersonas').textContent = `${lista.length} persona${lista.length === 1 ? '' : 's'} activa${lista.length === 1 ? '' : 's'}${lista.length !== cons.length ? ` (de ${cons.length})` : ''}`;
+  }
+  const elVac = $('#vacioPersonas');
+  if (elVac) {
+    elVac.textContent = cons.length ? 'No hay personas con ese filtro.' : 'No hay personas registradas en esta empresa.';
+    elVac.hidden = lista.length > 0;
+  }
 }
 
 function pintarSolicitudes() {
-  const q = ($('#qSol').value || '').toLowerCase().trim();
-  const est = $('#fEstado').value;
-  const lista = D.solicitudes.filter(s => {
+  const q = ($('#qSol') ? $('#qSol').value : '').toLowerCase().trim();
+  const est = $('#fEstado') ? $('#fEstado').value : '';
+  const sols = D.solicitudes || [];
+  const lista = sols.filter(s => {
     if (est && s.estado !== est) return false;
     if (!q) return true;
     return (s.titular_nombre || '').toLowerCase().includes(q) ||
@@ -93,22 +120,28 @@ function pintarSolicitudes() {
            (s.asistencia || '').toLowerCase().includes(q) ||
            (s.plan || '').toLowerCase().includes(q);
   });
-  $('#tbSol').innerHTML = lista.map(s => {
-    const estadoClass = s.estado === 'valida' ? 'ok' : (s.estado === 'invalida' ? 'bad' : 'warn');
-    const motivo = s.estado === 'invalida' && s.motivo ? `<div style="font-size:12px;color:var(--bad)">${esc(s.motivo)}</div>` : '';
-    const adjunto = s.archivo_url ? `<a href="${encodeURI(s.archivo_url)}" target="_blank" class="lnk" rel="noopener noreferrer">Ver PDF</a>` : '—';
-    return `<tr>
-      <td class="nw">${fechaHora(s.recibido_en)}</td>
-      <td><span class="tag">${s.tipo === 'alta' ? 'Alta' : 'Baja'}</span></td>
-      <td><strong>${esc(s.titular_nombre)}</strong><br><span class="muted">${esc(s.titular_num_doc)}</span></td>
-      <td>${esc(s.asistencia)}</td>
-      <td>${esc(s.plan)}</td>
-      <td class="num">${pesos(s.valor_mensual)}</td>
-      <td><span class="tag ${estadoClass}">${ESTADOS[s.estado] || s.estado}</span>${motivo}</td>
-      <td>${adjunto}</td>
-    </tr>`;
-  }).join('');
-  $('#vacioSol').textContent = D.solicitudes.length ? 'No hay solicitudes con ese filtro.' : `No hay solicitudes en ${nombreMes(D.periodo)}.`;
+  if ($('#tbSol')) {
+    $('#tbSol').innerHTML = lista.map(s => {
+      const estadoClass = s.estado === 'valida' ? 'ok' : (s.estado === 'invalida' ? 'bad' : 'warn');
+      const motivo = s.estado === 'invalida' && s.motivo ? `<div style="font-size:12px;color:var(--bad)">${esc(s.motivo)}</div>` : '';
+      const adjunto = s.archivo_url ? `<a href="${encodeURI(s.archivo_url)}" target="_blank" class="lnk" rel="noopener noreferrer">Ver PDF</a>` : '—';
+      return `<tr>
+        <td class="nw">${fechaHora(s.recibido_en)}</td>
+        <td><span class="tag">${s.tipo === 'alta' ? 'Alta' : 'Baja'}</span></td>
+        <td><strong>${esc(s.titular_nombre)}</strong><br><span class="muted">${esc(s.titular_num_doc)}</span></td>
+        <td>${esc(s.asistencia)}</td>
+        <td>${esc(s.plan)}</td>
+        <td class="num">${pesos(s.valor_mensual)}</td>
+        <td><span class="tag ${estadoClass}">${ESTADOS[s.estado] || s.estado}</span>${motivo}</td>
+        <td>${adjunto}</td>
+      </tr>`;
+    }).join('');
+  }
+  const elVacSol = $('#vacioSol');
+  if (elVacSol) {
+    elVacSol.textContent = sols.length ? 'No hay solicitudes con ese filtro.' : `No hay solicitudes en ${nombreMes(D.periodo)}.`;
+    elVacSol.hidden = lista.length > 0;
+  }
 }
 
 function abrirTab(t) {
@@ -209,8 +242,14 @@ $('#mOk').addEventListener('click', async () => {
       ? '<a class="link-w" href="/admin">← Administración</a>' : '';
     pintarUsuario(SES, volver);
     await cargar();
-    $('#cargando').hidden = true; $('#app').hidden = false;
+    if ($('#cargando')) $('#cargando').hidden = true;
+    if ($('#app')) $('#app').hidden = false;
   } catch (x) {
-    $('#cargando').hidden = true; $('#errorCarga').textContent = x.message; $('#errorCarga').hidden = false;
+    if ($('#cargando')) $('#cargando').hidden = true;
+    if ($('#errorCarga')) {
+      $('#errorCarga').textContent = x.message || 'Error al cargar';
+      $('#errorCarga').hidden = false;
+    }
+    console.error('Error cargando portal:', x);
   }
 })();

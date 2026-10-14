@@ -8,6 +8,11 @@ const fechaHora = iso => iso ? new Date(iso).toLocaleString('es-CO', { dateStyle
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const nombreMes = p => { const [a, m] = String(p).split('-'); return `${MESES[+m - 1] || ''} ${a}`; };
 const ESTADOS = { pendiente: 'Pendiente', valida: 'Válida', invalida: 'Inválida' };
+const setText = (s, v) => {
+  const el = typeof s === 'string' ? $(s) : s;
+  if (el) el.textContent = v != null ? v : '';
+  return el;
+};
 
 function toast(msg) {
   let t = $('#toast');

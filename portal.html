@@ -20,8 +20,8 @@
   <div id="app" hidden>
     <div class="bar">
       <div class="grow">
-        <h2 id="titEmpresa"></h2>
-        <p class="sub" style="margin:0" id="subEmpresa"></p>
+        <h2 id="titEmpresa"><span id="empresaNombre"></span></h2>
+        <p class="sub" style="margin:0" id="subEmpresa"><span id="empresaNit"></span></p>
       </div>
       <div><label for="periodo">Mes</label><select id="periodo" style="min-width:170px"></select></div>
       <a class="btn" id="lnkAlta" href="/?modulo=inscripcion" style="display:inline-flex;align-items:center;text-decoration:none">Nueva inscripción</a>
@@ -57,7 +57,7 @@
       </div>
       <p class="muted" id="cuentaPersonas" style="margin:0 0 8px;font-size:13px"></p>
       <div class="tabla"><table>
-        <thead><tr><th>Titular</th><th>Documento</th><th>Asistencia</th><th>Plan</th><th class="num">Personas cubiertas</th><th class="num">Valor mensual</th><th>Desde</th><th></th></tr></thead>
+        <thead><tr><th>Titular</th><th>Documento</th><th>Asistencia</th><th>Plan</th><th>Mascota</th><th class="num">Personas cubiertas</th><th class="num">Valor mensual</th><th>Desde</th></tr></thead>
         <tbody id="tbPersonas"></tbody>
       </table><div class="vacio" id="vacioPersonas" hidden>No hay personas activas.</div></div>
     </section>
