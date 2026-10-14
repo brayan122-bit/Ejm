@@ -456,7 +456,8 @@ $('#cToggleModo').addEventListener('click', async () => {
 $('#cSembrar').addEventListener('click', async () => {
   if (!confirm('¿Cargar registros ficticios de ejemplo en las tablas de prueba para validar la visualización y conciliación?')) return;
   try {
-    const r = await api('/api/admin', { method: 'POST', body: { accion: 'consolidado_conciliacion_sembrar_ejemplo' } });
+    const empId = $('#cEmpresa') ? $('#cEmpresa').value : undefined;
+    const r = await api('/api/admin', { method: 'POST', body: { accion: 'consolidado_conciliacion_sembrar_ejemplo', empresa_id: empId || undefined } });
     toast(`Datos de prueba cargados: ${r.insertados} registros y ${r.meses} valores mensuales.`);
     await cargarConsolidado(1);
   } catch (x) {

@@ -24,10 +24,15 @@ function pintar() {
     $('#periodo').innerHTML = (D.periodos || []).map(p => `<option value="${p}" ${p === D.periodo ? 'selected' : ''}>${esc(nombreMes(p))}${p === D.periodo_actual ? ' (actual)' : ''}</option>`).join('');
   }
 
+  const totalGeneral = (r.valor_total != null && Number(r.valor_total) > 0)
+    ? Number(r.valor_total)
+    : (r.por_producto || []).reduce((acc, p) => acc + (Number(p.valor) || 0), 0);
+  const totalAsistencias = r.asistencias || (r.por_producto || []).reduce((acc, p) => acc + (Number(p.cantidad) || 0), 0);
+
   const k = [
     ['Total personas activas', numero(r.personas_activas ?? r.personas ?? r.titulares ?? 0), 'En el consolidado', ''],
-    ['Total asistencias', numero(r.asistencias || 0), 'Planes asignados', ''],
-    ['Valor mensual total', pesos(r.valor_total || 0), 'Costo del mes', ''],
+    ['Total asistencias', numero(totalAsistencias), 'Planes asignados', ''],
+    ['Valor mensual total', pesos(totalGeneral), 'Costo del mes', ''],
   ];
   if ((r.valor_empresa || 0) > 0 || (r.valor_colaborador || 0) > 0) {
     k.push(
@@ -47,7 +52,7 @@ function pintar() {
       <td class="num">${numero(p.cantidad)}</td><td class="num">${pesos(p.valor)}</td></tr>`).join('');
   }
   if ($('#tfProductos')) {
-    $('#tfProductos').innerHTML = (r.por_producto && r.por_producto.length) ? `<tr><td colspan="2">Total</td><td class="num">${numero(r.asistencias)}</td><td class="num">${pesos(r.valor_total)}</td></tr>` : '';
+    $('#tfProductos').innerHTML = (r.por_producto && r.por_producto.length) ? `<tr><td colspan="2">Total</td><td class="num">${numero(totalAsistencias)}</td><td class="num">${pesos(totalGeneral)}</td></tr>` : '';
   }
 
   const pend = (D.solicitudes || []).filter(s => s.estado === 'pendiente');
