@@ -141,6 +141,158 @@ const MIGRACIONES = [
           BEFORE UPDATE OR DELETE ON auditoria
           FOR EACH ROW EXECUTE FUNCTION impedir_modificar_auditoria()`
     ]
+  },
+  {
+    id: '009_consolidado_conciliacion',
+    queries: () => [
+      // 1. Configuración de modo prueba / producción
+      sql`CREATE TABLE IF NOT EXISTS configuracion_sistema (
+        clave TEXT PRIMARY KEY,
+        valor TEXT NOT NULL,
+        actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`,
+      sql`INSERT INTO configuracion_sistema (clave, valor)
+          VALUES ('consolidado_modo', 'test')
+          ON CONFLICT (clave) DO NOTHING`,
+
+      // 2. Tabla consolidado de conciliación (Producción)
+      sql`CREATE TABLE IF NOT EXISTS consolidado_conciliacion (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        empresa_id INTEGER REFERENCES empresas(id),
+        nit TEXT,
+        convenio_empresa TEXT,
+        xc_subscriptionname__c TEXT,
+        estado TEXT NOT NULL DEFAULT 'Activo',
+        canal_atencion TEXT,
+        fecha_cargue DATE,
+        fecha_corte DATE,
+        asociado TEXT,
+        doc_asociado TEXT,
+        fecha_retiro DATE,
+        asistencia TEXT,
+        asistencia_id TEXT,
+        plan TEXT,
+        plan_id TEXT,
+        valor_con_iva NUMERIC(12,2) NOT NULL DEFAULT 0,
+        valor_sin_iva NUMERIC(12,2),
+        titular TEXT,
+        tipo_doc TEXT,
+        numero_identificacion TEXT,
+        fecha_nacimiento DATE,
+        celular TEXT,
+        correo TEXT,
+        ciudad_municipio TEXT,
+        direccion_predio TEXT,
+        edad INTEGER,
+        nombre_beneficiario_1 TEXT,
+        tipo_doc_beneficiario_1 TEXT,
+        documento_numero_beneficiario_1 TEXT,
+        parentesco_1 TEXT,
+        porcentaje_1 NUMERIC(5,2),
+        nombre_beneficiario_2 TEXT,
+        tipo_doc_beneficiario_2 TEXT,
+        documento_numero_beneficiario_2 TEXT,
+        parentesco_2 TEXT,
+        porcentaje_2 NUMERIC(5,2),
+        nombre_beneficiario_3 TEXT,
+        tipo_doc_beneficiario_3 TEXT,
+        documento_numero_beneficiario_3 TEXT,
+        parentesco_3 TEXT,
+        porcentaje_3 NUMERIC(5,2),
+        origen TEXT NOT NULL DEFAULT 'formulario',
+        solicitud_id INTEGER REFERENCES solicitudes(id),
+        aprobado_por INTEGER REFERENCES usuarios(id),
+        aprobado_en TIMESTAMPTZ,
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+        actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+        datos_adicionales JSONB NOT NULL DEFAULT '{}'::jsonb
+      )`,
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS consolidado_conc_xc_idx ON consolidado_conciliacion (xc_subscriptionname__c) WHERE xc_subscriptionname__c IS NOT NULL`,
+      sql`CREATE INDEX IF NOT EXISTS consolidado_conc_empresa_idx ON consolidado_conciliacion (empresa_id, estado)`,
+      sql`CREATE INDEX IF NOT EXISTS consolidado_conc_doc_idx ON consolidado_conciliacion (doc_asociado, asistencia)`,
+      sql`CREATE INDEX IF NOT EXISTS consolidado_conc_nit_idx ON consolidado_conciliacion (nit, doc_asociado)`,
+
+      // 3. Tabla de meses del consolidado (Producción)
+      sql`CREATE TABLE IF NOT EXISTS consolidado_meses (
+        id BIGSERIAL PRIMARY KEY,
+        registro_id UUID NOT NULL REFERENCES consolidado_conciliacion(id) ON DELETE CASCADE,
+        periodo VARCHAR(7) NOT NULL,
+        valor NUMERIC(12,2) NOT NULL DEFAULT 0,
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+        actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (registro_id, periodo)
+      )`,
+      sql`CREATE INDEX IF NOT EXISTS consolidado_meses_per_idx ON consolidado_meses (periodo)`,
+
+      // 4. Tabla consolidado de conciliación (Modo Prueba)
+      sql`CREATE TABLE IF NOT EXISTS consolidado_conciliacion_test (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        empresa_id INTEGER REFERENCES empresas(id),
+        nit TEXT,
+        convenio_empresa TEXT,
+        xc_subscriptionname__c TEXT,
+        estado TEXT NOT NULL DEFAULT 'Activo',
+        canal_atencion TEXT,
+        fecha_cargue DATE,
+        fecha_corte DATE,
+        asociado TEXT,
+        doc_asociado TEXT,
+        fecha_retiro DATE,
+        asistencia TEXT,
+        asistencia_id TEXT,
+        plan TEXT,
+        plan_id TEXT,
+        valor_con_iva NUMERIC(12,2) NOT NULL DEFAULT 0,
+        valor_sin_iva NUMERIC(12,2),
+        titular TEXT,
+        tipo_doc TEXT,
+        numero_identificacion TEXT,
+        fecha_nacimiento DATE,
+        celular TEXT,
+        correo TEXT,
+        ciudad_municipio TEXT,
+        direccion_predio TEXT,
+        edad INTEGER,
+        nombre_beneficiario_1 TEXT,
+        tipo_doc_beneficiario_1 TEXT,
+        documento_numero_beneficiario_1 TEXT,
+        parentesco_1 TEXT,
+        porcentaje_1 NUMERIC(5,2),
+        nombre_beneficiario_2 TEXT,
+        tipo_doc_beneficiario_2 TEXT,
+        documento_numero_beneficiario_2 TEXT,
+        parentesco_2 TEXT,
+        porcentaje_2 NUMERIC(5,2),
+        nombre_beneficiario_3 TEXT,
+        tipo_doc_beneficiario_3 TEXT,
+        documento_numero_beneficiario_3 TEXT,
+        parentesco_3 TEXT,
+        porcentaje_3 NUMERIC(5,2),
+        origen TEXT NOT NULL DEFAULT 'formulario',
+        solicitud_id INTEGER REFERENCES solicitudes(id),
+        aprobado_por INTEGER REFERENCES usuarios(id),
+        aprobado_en TIMESTAMPTZ,
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+        actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+        datos_adicionales JSONB NOT NULL DEFAULT '{}'::jsonb
+      )`,
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS consolidado_test_xc_idx ON consolidado_conciliacion_test (xc_subscriptionname__c) WHERE xc_subscriptionname__c IS NOT NULL`,
+      sql`CREATE INDEX IF NOT EXISTS consolidado_test_empresa_idx ON consolidado_conciliacion_test (empresa_id, estado)`,
+      sql`CREATE INDEX IF NOT EXISTS consolidado_test_doc_idx ON consolidado_conciliacion_test (doc_asociado, asistencia)`,
+      sql`CREATE INDEX IF NOT EXISTS consolidado_test_nit_idx ON consolidado_conciliacion_test (nit, doc_asociado)`,
+
+      // 5. Tabla de meses del consolidado (Modo Prueba)
+      sql`CREATE TABLE IF NOT EXISTS consolidado_meses_test (
+        id BIGSERIAL PRIMARY KEY,
+        registro_id UUID NOT NULL REFERENCES consolidado_conciliacion_test(id) ON DELETE CASCADE,
+        periodo VARCHAR(7) NOT NULL,
+        valor NUMERIC(12,2) NOT NULL DEFAULT 0,
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+        actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (registro_id, periodo)
+      )`,
+      sql`CREATE INDEX IF NOT EXISTS consolidado_meses_test_per_idx ON consolidado_meses_test (periodo)`
+    ]
   }
 ];
 
@@ -436,5 +588,96 @@ export const DOMINIOS_PUBLICOS = new Set([
 export function dominioDeEmail(email) {
   const at = String(email || '').lastIndexOf('@');
   return at >= 0 ? String(email).slice(at + 1).toLowerCase() : '';
+}
+
+// ── Consolidado de Conciliación: Gestión de Modo Prueba / Producción ────────
+export async function obtenerModoConsolidado() {
+  if (process.env.CONSOLIDADO_MODO === 'prod') return 'prod';
+  if (process.env.CONSOLIDADO_MODO === 'test') return 'test';
+  try {
+    const [cfg] = await sql`SELECT valor FROM configuracion_sistema WHERE clave = 'consolidado_modo' LIMIT 1`;
+    return cfg && cfg.valor === 'prod' ? 'prod' : 'test';
+  } catch {
+    return 'test';
+  }
+}
+
+export async function establecerModoConsolidado(modo) {
+  const m = modo === 'prod' ? 'prod' : 'test';
+  await sql`
+    INSERT INTO configuracion_sistema (clave, valor, actualizado_en)
+    VALUES ('consolidado_modo', ${m}, now())
+    ON CONFLICT (clave) DO UPDATE SET valor = ${m}, actualizado_en = now()
+  `;
+  return m;
+}
+
+export function tablasConsolidado(modo = 'test') {
+  const esTest = modo !== 'prod';
+  return {
+    esTest,
+    tablaReg: esTest ? 'consolidado_conciliacion_test' : 'consolidado_conciliacion',
+    tablaMes: esTest ? 'consolidado_meses_test' : 'consolidado_meses'
+  };
+}
+
+export function calcularEdad(fnac) {
+  if (!fnac) return null;
+  let d;
+  if (fnac instanceof Date) {
+    d = fnac;
+  } else if (typeof fnac === 'string') {
+    const s = fnac.trim();
+    if (s.includes('/')) {
+      const p = s.split('/');
+      if (p.length === 3) d = new Date(Number(p[2]), Number(p[1]) - 1, Number(p[0]));
+    } else if (s.includes('-')) {
+      const p = s.split('-');
+      if (p.length === 3) d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    } else {
+      d = new Date(s);
+    }
+  }
+  if (!d || isNaN(d.getTime())) return null;
+  const dif = Date.now() - d.getTime();
+  const ageDate = new Date(dif);
+  const edad = Math.abs(ageDate.getUTCFullYear() - 1970);
+  return Number.isFinite(edad) && edad >= 0 && edad <= 120 ? edad : null;
+}
+
+const NOMBRES_MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const NOMBRES_MESES_COMPLETOS = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
+
+export function etiquetaPeriodo(periodo) {
+  if (!periodo || typeof periodo !== 'string' || !/^\d{4}-\d{2}$/.test(periodo)) return periodo || '';
+  const [aStr, mStr] = periodo.split('-');
+  const anio = parseInt(aStr, 10);
+  const mesIdx = parseInt(mStr, 10) - 1;
+  if (mesIdx < 0 || mesIdx > 11) return periodo;
+  if (anio === 2025) {
+    return NOMBRES_MESES_COMPLETOS[mesIdx];
+  }
+  const anioCorto = String(anio).slice(-2);
+  return `${NOMBRES_MESES[mesIdx]}-${anioCorto}`;
+}
+
+export function periodoDeEtiqueta(etiqueta) {
+  if (!etiqueta) return null;
+  const s = String(etiqueta).trim().toUpperCase();
+  if (/^\d{4}-\d{2}$/.test(s)) return s;
+  const idx2025 = NOMBRES_MESES_COMPLETOS.indexOf(s);
+  if (idx2025 !== -1) {
+    return `2025-${String(idx2025 + 1).padStart(2, '0')}`;
+  }
+  const match = s.match(/^([A-Z]{3})[-_ ]?(\d{2})$/);
+  if (match) {
+    const mesNom = match[1].toLowerCase();
+    const anio = 2000 + parseInt(match[2], 10);
+    const mIdx = NOMBRES_MESES.indexOf(mesNom);
+    if (mIdx !== -1) {
+      return `${anio}-${String(mIdx + 1).padStart(2, '0')}`;
+    }
+  }
+  return null;
 }
 
