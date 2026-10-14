@@ -300,6 +300,52 @@ const MIGRACIONES = [
       sql`ALTER TABLE solicitudes ALTER COLUMN consolidado_id TYPE TEXT USING consolidado_id::text`,
       sql`CREATE INDEX IF NOT EXISTS solicitudes_consolidado_id_idx ON solicitudes (consolidado_id)`
     ]
+  },
+  {
+    id: '011_empresa_subsidio_y_consolidado_valores',
+    queries: () => [
+      sql`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS porcentaje_subsidio NUMERIC(5,2) DEFAULT 0`,
+      sql`UPDATE consolidado_conciliacion_test c
+          SET valor_con_iva = m.valor
+          FROM (
+            SELECT DISTINCT ON (registro_id) registro_id, valor
+            FROM consolidado_meses_test
+            WHERE valor > 0
+            ORDER BY registro_id, periodo DESC
+          ) m
+          WHERE c.id = m.registro_id AND (c.valor_con_iva IS NULL OR c.valor_con_iva = 0)`,
+      sql`UPDATE consolidado_conciliacion_test
+          SET valor_con_iva = CASE
+            WHEN asistencia ILIKE '%doctor%' THEN 28000
+            WHEN asistencia ILIKE '%bienestar%' THEN 45000
+            WHEN asistencia ILIKE '%mascota%' THEN 15000
+            WHEN asistencia ILIKE '%hogar%' THEN 19500
+            WHEN asistencia ILIKE '%odontolog%' THEN 20000
+            WHEN asistencia ILIKE '%funeral%' THEN 18000
+            ELSE 20000
+          END
+          WHERE valor_con_iva IS NULL OR valor_con_iva = 0`,
+      sql`UPDATE consolidado_conciliacion c
+          SET valor_con_iva = m.valor
+          FROM (
+            SELECT DISTINCT ON (registro_id) registro_id, valor
+            FROM consolidado_meses
+            WHERE valor > 0
+            ORDER BY registro_id, periodo DESC
+          ) m
+          WHERE c.id = m.registro_id AND (c.valor_con_iva IS NULL OR c.valor_con_iva = 0)`,
+      sql`UPDATE consolidado_conciliacion
+          SET valor_con_iva = CASE
+            WHEN asistencia ILIKE '%doctor%' THEN 28000
+            WHEN asistencia ILIKE '%bienestar%' THEN 45000
+            WHEN asistencia ILIKE '%mascota%' THEN 15000
+            WHEN asistencia ILIKE '%hogar%' THEN 19500
+            WHEN asistencia ILIKE '%odontolog%' THEN 20000
+            WHEN asistencia ILIKE '%funeral%' THEN 18000
+            ELSE 20000
+          END
+          WHERE valor_con_iva IS NULL OR valor_con_iva = 0`
+    ]
   }
 ];
 

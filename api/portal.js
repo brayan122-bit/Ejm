@@ -3,7 +3,7 @@
 // empresa_admin ve solicitudes de todos los periodos; empresa_usuario solo del actual.
 import { sql, asegurarEsquema, periodoActual, periodoValido, registrarError, auditar, obtenerModoConsolidado } from './_db.js';
 import { exigir, empresaObjetivo, esRolEmpresa } from './_auth.js';
-import { resumenConciliacion, MODELOS } from './_catalogo.js';
+import { resumenConciliacion, MODELOS, precioCatalogo, parsearDinero, normalizarNombreAsistencia } from './_catalogo.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') { res.setHeader('Allow', 'GET'); return res.status(405).json({ error: 'Método no permitido' }); }
@@ -29,9 +29,14 @@ export default async function handler(req, res) {
                    COALESCE(c.plan, 'Plan Único') AS plan,
                    '' AS mascota,
                    'Nomina' AS pago,
-                   COALESCE(c.valor_con_iva, 0)::numeric AS valor_mensual,
-                   CASE WHEN ${emp.modelo} = 1 THEN COALESCE(c.valor_con_iva, 0)::numeric ELSE 0 END AS valor_empresa,
-                   CASE WHEN ${emp.modelo} = 2 THEN COALESCE(c.valor_con_iva, 0)::numeric ELSE 0 END AS valor_colaborador,
+                   c.valor_con_iva,
+                   (
+                     SELECT m.valor
+                     FROM consolidado_meses_test m
+                     WHERE m.registro_id = c.id AND m.valor > 0
+                     ORDER BY m.periodo DESC
+                     LIMIT 1
+                   ) AS ultimo_valor_mes,
                    1 AS personas,
                    to_char(c.fecha_cargue, 'DD/MM/YYYY') AS fecha_alta,
                    COALESCE(c.tipo_doc, 'CC') AS tipo_doc,
@@ -48,9 +53,14 @@ export default async function handler(req, res) {
                    COALESCE(c.plan, 'Plan Único') AS plan,
                    '' AS mascota,
                    'Nomina' AS pago,
-                   COALESCE(c.valor_con_iva, 0)::numeric AS valor_mensual,
-                   CASE WHEN ${emp.modelo} = 1 THEN COALESCE(c.valor_con_iva, 0)::numeric ELSE 0 END AS valor_empresa,
-                   CASE WHEN ${emp.modelo} = 2 THEN COALESCE(c.valor_con_iva, 0)::numeric ELSE 0 END AS valor_colaborador,
+                   c.valor_con_iva,
+                   (
+                     SELECT m.valor
+                     FROM consolidado_meses m
+                     WHERE m.registro_id = c.id AND m.valor > 0
+                     ORDER BY m.periodo DESC
+                     LIMIT 1
+                   ) AS ultimo_valor_mes,
                    1 AS personas,
                    to_char(c.fecha_cargue, 'DD/MM/YYYY') AS fecha_alta,
                    COALESCE(c.tipo_doc, 'CC') AS tipo_doc,
@@ -93,6 +103,60 @@ export default async function handler(req, res) {
       `;
     }
 
+    function buscarPrecioEmpresa(empresa, asistencia, plan) {
+      if (!empresa || !empresa.productos) return 0;
+      const asisNorm = normalizarNombreAsistencia(asistencia);
+      const planNorm = normalizarNombreAsistencia(plan);
+      if (Array.isArray(empresa.productos)) {
+        for (const prod of empresa.productos) {
+          if (typeof prod === 'object' && prod !== null) {
+            const prodAsis = normalizarNombreAsistencia(prod.asistencia || prod.nombre || prod.asistencia_id);
+            const prodPlan = normalizarNombreAsistencia(prod.plan || prod.plan_id);
+            if (prodAsis && asisNorm.includes(prodAsis) && (!prodPlan || planNorm.includes(prodPlan))) {
+              const precio = parsearDinero(prod.precio || prod.valor || prod.valor_mensual);
+              if (precio > 0) return precio;
+            }
+          }
+        }
+      }
+      return 0;
+    }
+
+    for (const c of activos) {
+      let val = parsearDinero(c.valor_con_iva != null ? c.valor_con_iva : c.valor_mensual);
+      if (!val && c.ultimo_valor_mes != null) {
+        val = parsearDinero(c.ultimo_valor_mes);
+      }
+      if (!val) {
+        val = buscarPrecioEmpresa(emp, c.asistencia, c.plan);
+      }
+      if (!val) {
+        val = precioCatalogo(c.asistencia, c.plan);
+      }
+      c.valor_mensual = val;
+
+      let ve = parsearDinero(c.valor_empresa);
+      let vc = parsearDinero(c.valor_colaborador);
+      if (ve === 0 && vc === 0 && val > 0) {
+        const pctSubsidio = emp.porcentaje_subsidio != null ? Number(emp.porcentaje_subsidio) : null;
+        const modeloEmp = Number(emp.modelo) || 1;
+        const modeloFila = Number(c.modelo_aplicado) || (modeloEmp <= 2 ? modeloEmp : 1);
+
+        if (pctSubsidio != null && pctSubsidio > 0 && pctSubsidio <= 100) {
+          ve = Math.round(val * pctSubsidio / 100);
+          vc = val - ve;
+        } else if (modeloFila === 2) {
+          ve = val;
+          vc = 0;
+        } else {
+          ve = 0;
+          vc = val;
+        }
+      }
+      c.valor_empresa = ve;
+      c.valor_colaborador = vc;
+    }
+
     // Usuarios pendientes de aprobación (solo para empresa_admin)
     let pendientesAprobacion = 0;
     if (u.rol === 'empresa_admin') {
@@ -120,7 +184,8 @@ export default async function handler(req, res) {
     return res.status(200).json({
       empresa: {
         id: emp.id, nombre: emp.nombre, nit: emp.nit, modelo: emp.modelo,
-        modelo_nombre: MODELOS[emp.modelo]?.n || `Modelo ${emp.modelo}`
+        modelo_nombre: MODELOS[emp.modelo]?.n || `Modelo ${emp.modelo}`,
+        porcentaje_subsidio: Number(emp.porcentaje_subsidio) || 0
       },
       periodo, periodo_actual: periodoActual(),
       periodos: [...new Set([periodoActual(), ...periodos.map(p => p.periodo)])],

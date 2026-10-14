@@ -146,6 +146,85 @@ export function alertasDe(solicitudes, todas, consolidado, empresas) {
   return res;
 }
 
+export function normalizarNombreAsistencia(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function parsearDinero(v) {
+  if (v == null) return 0;
+  if (typeof v === 'number') return Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0;
+  let s = String(v).trim().replace(/[$€\s]/g, '');
+  if (!s || s === '-' || s === '—') return 0;
+  if (s.includes('.') && s.includes(',')) {
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      s = s.replace(/,/g, '');
+    }
+  } else if (s.includes('.')) {
+    const parts = s.split('.');
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = s.replace(/\./g, '');
+    }
+  } else if (s.includes(',')) {
+    const parts = s.split(',');
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = s.replace(/,/g, '');
+    } else {
+      s = s.replace(',', '.');
+    }
+  }
+  const n = parseFloat(s);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
+}
+
+export const PRECIOS_CATALOGO = {
+  'DOCTOR 360': 28000,
+  'ASISTENCIA DOCTOR 360': 28000,
+  'BIENESTAR INTEGRAL': 45000,
+  'ASISTENCIA BIENESTAR INTEGRAL': 45000,
+  'PROTECCION HOGAR': 19500,
+  'ASISTENCIA PROTECCION HOGAR': 19500,
+  'ASISTENCIA PROTECCION HOGAR Y MASCOTAS': 19500,
+  'ASISTENCIA MASCOTAS': 15000,
+  'HOGAR MASCOTAS': 15000,
+  'HOGAR MASCOTA PLENA': 18000,
+  'ODONTOLOGICA 360': 20000,
+  'ASISTENCIA ODONTOLOGICA 360': 20000,
+  'FUNERAL 360': 18000,
+  'ASISTENCIA FUNERAL 360': 18000
+};
+
+export function precioCatalogo(nombreAsistencia, nombrePlan) {
+  const asisNorm = normalizarNombreAsistencia(nombreAsistencia);
+  const planNorm = normalizarNombreAsistencia(nombrePlan);
+
+  if (asisNorm.includes('PROTECCION HOGAR') || asisNorm.includes('HOGAR')) {
+    if (planNorm.includes('PLAN 2')) return 21000;
+    if (planNorm.includes('PLAN 3')) return 25000;
+    if (planNorm.includes('MASCOTA PLENA')) return 18000;
+    if (planNorm.includes('MASCOTA') || asisNorm.includes('MASCOTA')) return 15000;
+    return 19500;
+  }
+  if (asisNorm.includes('MASCOTA')) return 15000;
+  if (asisNorm.includes('DOCTOR')) return 28000;
+  if (asisNorm.includes('BIENESTAR')) return 45000;
+  if (asisNorm.includes('ODONTOLOGICA')) return 20000;
+  if (asisNorm.includes('FUNERAL')) return 18000;
+
+  if (PRECIOS_CATALOGO[asisNorm]) return PRECIOS_CATALOGO[asisNorm];
+  for (const [k, p] of Object.entries(PRECIOS_CATALOGO)) {
+    if (asisNorm.includes(k) || k.includes(asisNorm)) return p;
+  }
+  return 0;
+}
+
 /**
  * Resumen de conciliación de una empresa a partir de su consolidado activo.
  * Para empresa mixta (modelo=3): desglose subtotal_m1 / subtotal_m2,
@@ -155,15 +234,22 @@ export function resumenConciliacion(activos, modelo) {
   const porTitular = new Map();
   const porProducto = new Map();
   let total = 0, emp = 0, col = 0, totalM1 = 0, totalM2 = 0;
-  for (const c of activos) {
+  for (const c of (activos || [])) {
     porTitular.set(c.titular_num_doc, Math.max(porTitular.get(c.titular_num_doc) || 0, c.personas || 1));
     const k = `${c.asistencia} · ${c.plan}`;
     const p = porProducto.get(k) || { asistencia: c.asistencia, plan: c.plan, cantidad: 0, valor: 0 };
-    p.cantidad++; p.valor += c.valor_mensual || 0; porProducto.set(k, p);
-    total += c.valor_mensual || 0; emp += c.valor_empresa || 0; col += c.valor_colaborador || 0;
+    const vm = parsearDinero(c.valor_mensual);
+    const ve = parsearDinero(c.valor_empresa);
+    const vc = parsearDinero(c.valor_colaborador);
+    p.cantidad++;
+    p.valor += vm;
+    porProducto.set(k, p);
+    total += vm;
+    emp += ve;
+    col += vc;
     // Para el desglose por modelo en empresa mixta
-    const modeloFila = c.modelo_aplicado || (modelo <= 2 ? modelo : 1);
-    if (modeloFila === 1) totalM1 += c.valor_mensual || 0; else totalM2 += c.valor_mensual || 0;
+    const modeloFila = Number(c.modelo_aplicado) || (modelo <= 2 ? modelo : 1);
+    if (modeloFila === 1) totalM1 += vm; else totalM2 += vm;
   }
   const esMixto = modelo === 3;
   // El descuento aplica: en modelo 2 sobre total; en mixto solo sobre subtotal_m2
@@ -173,12 +259,16 @@ export function resumenConciliacion(activos, modelo) {
   return {
     titulares: porTitular.size,
     personas: [...porTitular.values()].reduce((a, b) => a + b, 0),
-    asistencias: activos.length,
+    asistencias: (activos || []).length,
     por_producto: [...porProducto.values()].sort((a, b) => a.asistencia.localeCompare(b.asistencia) || a.plan.localeCompare(b.plan)),
-    valor_total: total, valor_empresa: emp, valor_colaborador: col,
+    valor_total: total,
+    valor_empresa: emp,
+    valor_colaborador: col,
     es_mixto: esMixto,
     subtotal_m1: esMixto ? totalM1 : null,
     subtotal_m2: esMixto ? totalM2 : null,
-    descuento_pct: pct, descuento_valor: descuento, total_a_pagar: total - descuento
+    descuento_pct: pct,
+    descuento_valor: descuento,
+    total_a_pagar: total - descuento
   };
 }

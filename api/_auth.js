@@ -175,6 +175,7 @@ export async function sesionDe(req, res = null) {
            u.mfa_secreto,
            COALESCE(u.mfa_recuperacion, '[]'::jsonb) AS mfa_recuperacion,
            e.nombre AS empresa_nombre, e.nit AS empresa_nit, e.modelo AS empresa_modelo,
+           COALESCE(e.porcentaje_subsidio, 0)::numeric AS empresa_porcentaje_subsidio,
            e.productos AS empresa_productos, e.activa AS empresa_activa,
            COALESCE(e.dominios, '[]'::jsonb) AS empresa_dominios
       FROM usuarios u LEFT JOIN empresas e ON e.id = u.empresa_id
@@ -248,13 +249,19 @@ export async function empresaObjetivo(u, empresaId) {
   if (esRolEmpresa(u.rol)) {
     return {
       id: u.empresa_id, nombre: u.empresa_nombre, nit: u.empresa_nit,
-      modelo: u.empresa_modelo, productos: u.empresa_productos || [],
+      modelo: u.empresa_modelo,
+      porcentaje_subsidio: Number(u.empresa_porcentaje_subsidio) || 0,
+      productos: u.empresa_productos || [],
       dominios: u.empresa_dominios || []
     };
   }
   const id = parseInt(empresaId, 10);
   if (!id) return null;
-  const [e] = await sql`SELECT id, nombre, nit, modelo, productos,
-      COALESCE(dominios, '[]'::jsonb) AS dominios FROM empresas WHERE id = ${id}`;
+  const [e] = await sql`SELECT id, nombre, nit, modelo,
+      COALESCE(porcentaje_subsidio, 0)::numeric AS porcentaje_subsidio,
+      productos, COALESCE(dominios, '[]'::jsonb) AS dominios FROM empresas WHERE id = ${id}`;
+  if (e) {
+    e.porcentaje_subsidio = Number(e.porcentaje_subsidio) || 0;
+  }
   return e || null;
 }

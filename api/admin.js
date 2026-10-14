@@ -10,7 +10,7 @@ import {
   calcularEdad, etiquetaPeriodo, periodoDeEtiqueta
 } from './_db.js';
 import { exigir, hashClave, claveTemporal, puedeValidar } from './_auth.js';
-import { alertasDe, PRODUCTOS, CATALOGO } from './_catalogo.js';
+import { alertasDe, PRODUCTOS, CATALOGO, precioCatalogo, parsearDinero, normalizarNombreAsistencia } from './_catalogo.js';
 import crypto from 'crypto';
 
 // Acciones que requieren exactamente rol 'maestro'
@@ -732,8 +732,22 @@ const ACCIONES = {
       const asociado = String(f['ASOCIADO'] || f.asociado || f['TITULAR'] || f.titular || '').trim();
       const docAsociado = String(f['DOC. ASOCIADO'] || f.doc_asociado || f['NUMERO DE IDENTIFICACIÓN'] || f.numero_identificacion || '').trim();
       const asistencia = String(f['ASISTENCIA'] || f.asistencia || '').trim();
-      const vIva = entero(f['VALOR CON IVA'] || f.valor_con_iva || 0);
-      const vSinIva = entero(f['VALOR SIN IVA'] || f.valor_sin_iva || 0) || null;
+      const plan = String(f['PLAN'] || f.plan || 'Plan Único').trim();
+      let vIva = parsearDinero(f['VALOR CON IVA'] || f.valor_con_iva);
+      if (!vIva) {
+        // Fallback al último periodo registrado en las columnas de meses con valor > 0
+        for (const [col, val] of Object.entries(f)) {
+          const per = periodoDeEtiqueta(col);
+          if (per) {
+            const vm = parsearDinero(val);
+            if (vm > 0) vIva = vm;
+          }
+        }
+      }
+      if (!vIva) {
+        vIva = precioCatalogo(asistencia, plan);
+      }
+      const vSinIva = parsearDinero(f['VALOR SIN IVA'] || f.valor_sin_iva) || null;
 
       const titular = String(f['TITULAR'] || f.titular || asociado).trim();
       const tipoDoc = String(f['TIPO DOC.'] || f.tipo_doc || 'CC').trim().toUpperCase();
@@ -791,7 +805,7 @@ const ACCIONES = {
               empresa_id = coalesce(${empId}, empresa_id),
               nit = ${nit}, convenio_empresa = ${convenio}, estado = ${estado}, canal_atencion = ${canal},
               fecha_cargue = ${fCargue}::date, fecha_corte = ${fCorte}::date, fecha_retiro = ${fRetiro}::date,
-              asociado = ${asociado}, doc_asociado = ${docAsociado}, asistencia = ${asistencia},
+              asociado = ${asociado}, doc_asociado = ${docAsociado}, asistencia = ${asistencia}, plan = coalesce(${plan}, plan),
               valor_con_iva = ${vIva}, valor_sin_iva = ${vSinIva}, titular = ${titular},
               tipo_doc = ${tipoDoc}, numero_identificacion = ${numDoc}, fecha_nacimiento = ${fNac}::date,
               celular = ${celular}, correo = ${correo}, ciudad_municipio = ${ciudad}, direccion_predio = ${direccion}, edad = ${edadCalc},
@@ -807,7 +821,7 @@ const ACCIONES = {
               empresa_id = coalesce(${empId}, empresa_id),
               nit = ${nit}, convenio_empresa = ${convenio}, estado = ${estado}, canal_atencion = ${canal},
               fecha_cargue = ${fCargue}::date, fecha_corte = ${fCorte}::date, fecha_retiro = ${fRetiro}::date,
-              asociado = ${asociado}, doc_asociado = ${docAsociado}, asistencia = ${asistencia},
+              asociado = ${asociado}, doc_asociado = ${docAsociado}, asistencia = ${asistencia}, plan = coalesce(${plan}, plan),
               valor_con_iva = ${vIva}, valor_sin_iva = ${vSinIva}, titular = ${titular},
               tipo_doc = ${tipoDoc}, numero_identificacion = ${numDoc}, fecha_nacimiento = ${fNac}::date,
               celular = ${celular}, correo = ${correo}, ciudad_municipio = ${ciudad}, direccion_predio = ${direccion}, edad = ${edadCalc},
@@ -836,7 +850,7 @@ const ACCIONES = {
             ) VALUES (
               ${regId}, ${empId}, ${nit}, ${convenio}, ${xc}, ${estado}, ${canal},
               ${fCargue}::date, ${fCorte}::date, ${asociado}, ${docAsociado}, ${fRetiro}::date,
-              ${asistencia}, NULL, NULL, NULL, ${vIva}, ${vSinIva},
+              ${asistencia}, NULL, ${plan}, NULL, ${vIva}, ${vSinIva},
               ${titular}, ${tipoDoc}, ${numDoc}, ${fNac}::date, ${celular}, ${correo},
               ${ciudad}, ${direccion}, ${edadCalc},
               ${ben1.nom}, ${ben1.tdoc}, ${ben1.ndoc}, ${ben1.par}, ${ben1.pct},
@@ -860,7 +874,7 @@ const ACCIONES = {
             ) VALUES (
               ${regId}, ${empId}, ${nit}, ${convenio}, ${xc}, ${estado}, ${canal},
               ${fCargue}::date, ${fCorte}::date, ${asociado}, ${docAsociado}, ${fRetiro}::date,
-              ${asistencia}, NULL, NULL, NULL, ${vIva}, ${vSinIva},
+              ${asistencia}, NULL, ${plan}, NULL, ${vIva}, ${vSinIva},
               ${titular}, ${tipoDoc}, ${numDoc}, ${fNac}::date, ${celular}, ${correo},
               ${ciudad}, ${direccion}, ${edadCalc},
               ${ben1.nom}, ${ben1.tdoc}, ${ben1.ndoc}, ${ben1.par}, ${ben1.pct},
@@ -1032,7 +1046,14 @@ const ACCIONES = {
     await sql`TRUNCATE TABLE consolidado_meses_test CASCADE`;
     await sql`TRUNCATE TABLE consolidado_conciliacion_test CASCADE`;
 
-    const [emp] = await sql`SELECT id, nit, nombre FROM empresas LIMIT 1`;
+    const targetEmpId = b.empresa_id ? Number(b.empresa_id) : (u.empresa_id ? Number(u.empresa_id) : null);
+    let emp = null;
+    if (targetEmpId) {
+      [emp] = await sql`SELECT id, nit, nombre FROM empresas WHERE id = ${targetEmpId}`;
+    }
+    if (!emp) {
+      [emp] = await sql`SELECT id, nit, nombre FROM empresas ORDER BY id ASC LIMIT 1`;
+    }
     const nitDef = emp ? emp.nit : '900.123.456-1';
     const nomDef = emp ? emp.nombre : 'Alianza del Norte S.A.S.';
     const empIdDef = emp ? emp.id : null;
@@ -1046,21 +1067,21 @@ const ACCIONES = {
     const ejemplos = [
       {
         xc: 'XC-2025-00101', doc: '1020304050', titular: 'Carlos Andrés Rodríguez Pardo',
-        asistencia: 'Doctor 360', valor: 28000, estado: 'Activo', fCargue: '2025-03-01', fRetiro: null,
+        asistencia: 'Doctor 360', plan: 'Plan Único', valor: 28000, estado: 'Activo', fCargue: '2025-03-01', fRetiro: null,
         fnac: '1988-05-14', cel: '3101234567', mail: 'carlos.rodriguez@ejemplo.com',
         ciudad: 'Bogotá D.C.', dir: 'Calle 100 # 15-20 Apt 301',
         b1Nom: 'María Fernanda Rodríguez', b1Tdoc: 'TI', b1Doc: '1098765432', b1Par: 'Hijo(a)', b1Pct: 100
       },
       {
         xc: 'XC-2025-00102', doc: '1020304050', titular: 'Carlos Andrés Rodríguez Pardo',
-        asistencia: 'Protección Hogar', valor: 19500, estado: 'Activo', fCargue: '2025-03-01', fRetiro: null,
+        asistencia: 'Protección Hogar', plan: 'Plan 1', valor: 19500, estado: 'Activo', fCargue: '2025-03-01', fRetiro: null,
         fnac: '1988-05-14', cel: '3101234567', mail: 'carlos.rodriguez@ejemplo.com',
         ciudad: 'Bogotá D.C.', dir: 'Calle 100 # 15-20 Apt 301',
         b1Nom: null, b1Tdoc: null, b1Doc: null, b1Par: null, b1Pct: null
       },
       {
         xc: 'XC-2025-00103', doc: '52431678', titular: 'Gloria Esperanza Gómez Vargas',
-        asistencia: 'Bienestar Integral', valor: 45000, estado: 'Activo', fCargue: '2025-03-15', fRetiro: null,
+        asistencia: 'Bienestar Integral', plan: 'Plan Único', valor: 45000, estado: 'Activo', fCargue: '2025-03-15', fRetiro: null,
         fnac: '1975-11-20', cel: '3209876543', mail: 'gloria.gomez@ejemplo.com',
         ciudad: 'Medellín', dir: 'Carrera 43A # 1 Sur-50',
         b1Nom: 'Jorge Iván Gómez', b1Tdoc: 'CC', b1Doc: '71234567', b1Par: 'Cónyuge', b1Pct: 50,
@@ -1068,55 +1089,56 @@ const ACCIONES = {
       },
       {
         xc: 'XC-2025-00104', doc: '80123456', titular: 'Fernando José Martínez Silva',
-        asistencia: 'Asistencia Mascotas', valor: 15000, estado: 'Inactivo', fCargue: '2025-04-01', fRetiro: '2026-05-15',
+        asistencia: 'Asistencia Mascotas', plan: 'Hogar Mascotas', valor: 15000, estado: 'Inactivo', fCargue: '2025-04-01', fRetiro: '2026-05-15',
         fnac: '1982-08-30', cel: '3001122334', mail: 'fernando.martinez@ejemplo.com',
         ciudad: 'Cali', dir: 'Avenida 6N # 22-10',
         b1Nom: null, b1Tdoc: null, b1Doc: null, b1Par: null, b1Pct: null
       },
       {
         xc: null, doc: '1032456789', titular: 'Laura Cristina Morales Díaz',
-        asistencia: 'Doctor 360', valor: 28000, estado: 'Activo', fCargue: '2026-08-10', fRetiro: null,
+        asistencia: 'Doctor 360', plan: 'Plan Único', valor: 28000, estado: 'Activo', fCargue: '2026-08-10', fRetiro: null,
         fnac: '1995-02-18', cel: '3158765432', mail: 'laura.morales@ejemplo.com',
         ciudad: 'Barranquilla', dir: 'Calle 72 # 54-30',
         b1Nom: 'Santiago Morales', b1Tdoc: 'TI', b1Doc: '1055443322', b1Par: 'Hermano(a)', b1Pct: 100
       },
       {
         xc: null, doc: '1018765432', titular: 'Felipe Arturo Castro Rincón',
-        asistencia: 'Protección Hogar', valor: 21000, estado: 'Activo', fCargue: '2026-09-01', fRetiro: null,
+        asistencia: 'Protección Hogar', plan: 'Plan 2', valor: 21000, estado: 'Activo', fCargue: '2026-09-01', fRetiro: null,
         fnac: '1991-09-09', cel: '3187654321', mail: 'felipe.castro@ejemplo.com',
         ciudad: 'Bucaramanga', dir: 'Carrera 27 # 36-14',
         b1Nom: null, b1Tdoc: null, b1Doc: null, b1Par: null, b1Pct: null
       },
       {
         xc: 'XC-2025-00107', doc: '1072345678', titular: 'Diana Patricia Salazar Torres',
-        asistencia: 'Doctor 360', valor: 28000, estado: 'Activo', fCargue: '2025-05-10', fRetiro: null,
+        asistencia: 'Doctor 360', plan: 'Plan Único', valor: 28000, estado: 'Activo', fCargue: '2025-05-10', fRetiro: null,
         fnac: '1984-12-05', cel: '3124567890', mail: 'diana.salazar@ejemplo.com',
         ciudad: 'Pereira', dir: 'Carrera 7 # 19-28',
         b1Nom: 'Esteban Salazar', b1Tdoc: 'RC', b1Doc: '11998877', b1Par: 'Hijo(a)', b1Pct: 100
       },
       {
         xc: 'XC-2025-00108', doc: '79876543', titular: 'Héctor Fabio Ramírez López',
-        asistencia: 'Bienestar Integral', valor: 45000, estado: 'Activo', fCargue: '2025-06-01', fRetiro: null,
+        asistencia: 'Bienestar Integral', plan: 'Plan Único', valor: 45000, estado: 'Activo', fCargue: '2025-06-01', fRetiro: null,
         fnac: '1979-04-22', cel: '3145678901', mail: 'hector.ramirez@ejemplo.com',
         ciudad: 'Manizales', dir: 'Calle 23 # 21-45',
         b1Nom: null, b1Tdoc: null, b1Doc: null, b1Par: null, b1Pct: null
       },
       {
         xc: 'XC-2025-00109', doc: '1098761234', titular: 'Camila Andrea Ospina Mejía',
-        asistencia: 'Asistencia Mascotas', valor: 15000, estado: 'Activo', fCargue: '2025-07-20', fRetiro: null,
+        asistencia: 'Asistencia Mascotas', plan: 'Hogar Mascotas', valor: 15000, estado: 'Activo', fCargue: '2025-07-20', fRetiro: null,
         fnac: '1998-07-11', cel: '3167890123', mail: 'camila.ospina@ejemplo.com',
         ciudad: 'Armenia', dir: 'Avenida Bolívar # 14N-55',
         b1Nom: null, b1Tdoc: null, b1Doc: null, b1Par: null, b1Pct: null
       },
       {
         xc: 'XC-2025-00110', doc: '1030987654', titular: 'Juan Guillermo Herrera Flórez',
-        asistencia: 'Protección Hogar', valor: 19500, estado: 'Inactivo', fCargue: '2025-03-01', fRetiro: '2026-03-31',
+        asistencia: 'Protección Hogar', plan: 'Plan 1', valor: 19500, estado: 'Inactivo', fCargue: '2025-03-01', fRetiro: '2026-03-31',
         fnac: '1987-03-17', cel: '3178901234', mail: 'juan.herrera@ejemplo.com',
         ciudad: 'Cartagena', dir: 'Bocagrande Carrera 3 # 6-40',
         b1Nom: null, b1Tdoc: null, b1Doc: null, b1Par: null, b1Pct: null
       }
     ];
 
+    let totalMeses = 0;
     for (const ej of ejemplos) {
       const uId = crypto.randomUUID();
       const edad = calcularEdad(ej.fnac);
@@ -1135,7 +1157,7 @@ const ACCIONES = {
         ) VALUES (
           ${uId}, ${empIdDef}, ${nitDef}, ${nomDef}, ${ej.xc}, ${ej.estado}, 'Venta Directa',
           ${ej.fCargue}::date, NULL, ${ej.titular}, ${ej.doc}, ${ej.fRetiro}::date,
-          ${ej.asistencia}, NULL, NULL, NULL, ${ej.valor}, NULL,
+          ${ej.asistencia}, NULL, ${ej.plan || 'Plan Único'}, NULL, ${ej.valor}, NULL,
           ${ej.titular}, 'CC', ${ej.doc}, ${ej.fnac}::date, ${ej.cel}, ${ej.mail},
           ${ej.ciudad}, ${ej.dir}, ${edad},
           ${ej.b1Nom || null}, ${ej.b1Tdoc || null}, ${ej.b1Doc || null}, ${ej.b1Par || null}, ${ej.b1Pct || null},
@@ -1152,11 +1174,12 @@ const ACCIONES = {
           INSERT INTO consolidado_meses_test (registro_id, periodo, valor)
           VALUES (${uId}, ${p}, ${ej.valor})
         `;
+        totalMeses++;
       }
     }
 
     await auditar(req, u, 'sembrar_ejemplo_consolidado', '10_registros', {});
-    return res.status(200).json({ ok: true, cargadas: ejemplos.length });
+    return res.status(200).json({ ok: true, insertados: ejemplos.length, meses: totalMeses, cargadas: ejemplos.length });
   },
 
   // ── Consolidado de Conciliación: Exportación Completa ───────────────────────
