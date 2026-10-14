@@ -54,19 +54,61 @@
 
     <!-- ============ CONSOLIDADO ============ -->
     <section data-panel="consolidado" hidden>
-      <div class="bar">
-        <div><label for="cEmpresa">Empresa</label><select id="cEmpresa" class="selEmpresas" style="min-width:220px"></select></div>
-        <div class="grow"><label for="cQ">Buscar</label><input type="search" id="cQ" placeholder="Cédula o nombre"></div>
-        <a class="btn sec" id="cPortal" style="display:inline-flex;align-items:center;text-decoration:none" hidden>Ver como la empresa</a>
-        <button type="button" class="btn sec" id="cImportar">Cargar consolidado inicial…</button>
-        <button type="button" class="btn" id="cCsv">Descargar para CRM (CSV)</button>
+      <!-- Banner de Modo Prueba / Producción -->
+      <div id="cModoBanner" class="notice warn" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+        <div>
+          <strong id="cModoTag" style="font-size:13.5px;letter-spacing:0.5px">MODO PRUEBA ACTIVO</strong> —
+          <span id="cModoDesc" style="font-size:13px">Operando sobre tablas aisladas de prueba (<code>consolidado_conciliacion_test</code>). Los datos de producción NO se tocan.</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn sm" id="cToggleModo" style="background:#173A8C;border-color:#173A8C">Cambiar a Producción</button>
+          <button type="button" class="btn sec sm" id="cSembrar">Cargar datos de ejemplo</button>
+          <button type="button" class="btn sec sm" id="cResetTest" style="color:var(--red-dark);border-color:#e0a0a0">Reiniciar datos de prueba</button>
+        </div>
       </div>
+
+      <div class="bar">
+        <div><label for="cEmpresa">Empresa</label><select id="cEmpresa" class="selEmpresas" style="min-width:200px"></select></div>
+        <div>
+          <label for="cEstado">Estado</label>
+          <select id="cEstado" style="min-width:130px">
+            <option value="">Todos</option>
+            <option value="Activo">Solo Activos</option>
+            <option value="Inactivo">Solo Inactivos</option>
+          </select>
+        </div>
+        <label class="chkline" style="margin-bottom:0">
+          <input type="checkbox" id="cSoloSinXc"> Solo pendientes de XC
+        </label>
+        <div class="grow"><label for="cQ">Buscar</label><input type="search" id="cQ" placeholder="Cédula, nombre, XC, NIT o asistencia"></div>
+        <a class="btn sec" id="cPortal" style="display:inline-flex;align-items:center;text-decoration:none" hidden>Ver como la empresa</a>
+      </div>
+
+      <div class="bar" style="margin-top:-4px;margin-bottom:12px;border-top:1px dashed var(--line);padding-top:10px">
+        <button type="button" class="btn sec sm" id="cPlantilla">Descargar plantilla vacía</button>
+        <button type="button" class="btn sec sm" id="cCsv">Descargar consolidado actual</button>
+        <button type="button" class="btn sec sm" id="cImportar">Cargar histórico…</button>
+        <button type="button" class="btn sec sm" id="cCierre">Cierre mensual…</button>
+        <button type="button" class="btn sec sm" id="cCompletarXc">Completar código XC…</button>
+      </div>
+
       <div class="kpis" id="cKpis"></div>
-      <p class="muted" id="cCuenta" style="margin:0 0 8px;font-size:13px"></p>
-      <div class="tabla"><table>
-        <thead><tr><th>Empresa</th><th>Titular</th><th>Documento</th><th>Asistencia</th><th>Plan</th><th>Pago</th><th class="num">Personas</th><th class="num">Valor mensual</th><th>Desde</th><th>Origen</th></tr></thead>
-        <tbody id="cTb"></tbody>
-      </table><div class="vacio" id="cVacio" hidden>No hay asistencias activas.</div></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+        <p class="muted" id="cCuenta" style="margin:0;font-size:13px"></p>
+        <div id="cPaginacion" style="display:flex;align-items:center;gap:8px" hidden>
+          <button type="button" class="btn sec sm" id="cPagAnt">« Anterior</button>
+          <span class="muted" id="cPagTxt" style="font-size:13px"></span>
+          <button type="button" class="btn sec sm" id="cPagSig">Siguiente »</button>
+        </div>
+      </div>
+
+      <div class="tabla" style="max-height:65vh">
+        <table id="cTablaFull">
+          <thead id="cThead"></thead>
+          <tbody id="cTb"></tbody>
+        </table>
+        <div class="vacio" id="cVacio" hidden>No hay registros que coincidan con los filtros.</div>
+      </div>
     </section>
 
     <!-- ============ EMPRESAS ============ -->
@@ -150,19 +192,108 @@ acme.com"></textarea>
     <p class="muted" style="font-size:13px">Cópiela ahora: no se vuelve a mostrar. Pídale al usuario que la cambie al ingresar (opción «Cambiar contraseña»).</p></div>
   <div class="dlg-f"><button class="btn sec" id="ctCopiar">Copiar</button><button class="btn" data-close>Listo</button></div></dialog>
 
-<!-- Importar consolidado -->
-<dialog id="dImp"><div class="dlg-h"><h3>Cargar consolidado inicial</h3><button class="x" data-close aria-label="Cerrar">×</button></div>
+<!-- Importar consolidado con Vista Previa Obligatoria -->
+<dialog id="dImp" style="max-width:920px"><div class="dlg-h"><h3>Cargar histórico del consolidado</h3><button class="x" data-close aria-label="Cerrar">×</button></div>
   <div class="dlg-b">
-    <p style="margin-top:0">Para cargar las personas que <strong>ya tienen</strong> la asistencia antes de usar el formulario. Un archivo por empresa. Las filas que ya existan activas se omiten.</p>
+    <p style="margin-top:0;font-size:13.5px">Suba el archivo Excel histórico (.xlsx) o CSV. Se leerá directamente en el navegador y se validará antes de guardar. <strong>Las suscripciones se importarán en el modo activo (Prueba / Producción).</strong></p>
     <div class="grid2">
-      <div class="full"><label for="impEmpresa">Empresa</label><select id="impEmpresa" class="selEmpresasObl"></select></div>
-      <div class="full"><label for="impArchivo">Archivo CSV o Excel (.xlsx)</label><input type="file" id="impArchivo" accept=".csv,text/csv,.xlsx"></div>
+      <div><label for="impEmpresa">Empresa / Convenio asignado</label><select id="impEmpresa" class="selEmpresasObl"></select></div>
+      <div><label for="impArchivo">Archivo Excel (.xlsx) o CSV</label><input type="file" id="impArchivo" accept=".xlsx,.xls,.csv"></div>
     </div>
-    <p style="font-size:13px">Columnas: <code>titular_num_doc</code>, <code>titular_nombre</code>, <code>asistencia</code>, <code>plan</code>, <code>valor_mensual</code>, y opcionales <code>titular_tipo_doc</code>, <code>personas</code>, <code>pago</code> (Nomina, Empresa o Cofinanciado), <code>mascota</code>.
-      <button type="button" class="lnk" id="impPlantilla">Descargar plantilla</button></p>
-    <div id="impInfo"></div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px">
+      <button type="button" class="lnk" id="impPlantilla">Descargar plantilla vacía con fila de ejemplo</button>
+      <button type="button" class="lnk" id="impBackupBtn" style="color:var(--green)">Descargar backup del consolidado antes de importar</button>
+    </div>
+
+    <!-- Contenedor de Vista Previa Obligatoria -->
+    <div id="impPreviewArea" hidden style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+      <h4 style="margin:0 0 10px;font-size:14px">Vista previa y métricas de validación:</h4>
+      <div class="kpis" id="impKpis" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px"></div>
+
+      <div id="impMesesMapeados" class="notice info" style="font-size:12.5px;padding:8px 12px;margin-bottom:10px" hidden></div>
+      <div id="impColumnasVacias" class="notice warn" style="font-size:12.5px;padding:8px 12px;margin-bottom:10px" hidden></div>
+
+      <div class="lab" style="margin-bottom:4px">Primeras 20 filas a importar:</div>
+      <div class="tabla" style="max-height:220px;overflow:auto;margin-bottom:10px">
+        <table id="impTablaPreview" style="font-size:11.5px">
+          <thead id="impThead"></thead>
+          <tbody id="impTbody"></tbody>
+        </table>
+      </div>
+      <div id="impProgreso" class="notice ok" hidden></div>
+    </div>
+    <div id="impInfo" style="margin-top:8px"></div>
   </div>
-  <div class="dlg-f"><button class="btn sec" data-close>Cancelar</button><button class="btn" id="impOk" disabled>Cargar</button></div></dialog>
+  <div class="dlg-f">
+    <button class="btn sec" data-close>Cancelar</button>
+    <button class="btn" id="impOk" disabled>Confirmar e importar al consolidado</button>
+  </div></dialog>
+
+<!-- Cierre mensual -->
+<dialog id="dCierre" style="max-width:540px"><div class="dlg-h"><h3>Cierre mensual de asistencias</h3><button class="x" data-close aria-label="Cerrar">×</button></div>
+  <div class="dlg-b">
+    <p style="margin-top:0">Este proceso genera la fila de cobro del mes para todas las suscripciones <strong>Activas</strong> en la tabla de meses. La columna aparecerá automáticamente en el consolidado y descargas.</p>
+    <div class="grid2">
+      <div class="full">
+        <label for="cierrePeriodo">Periodo a cerrar (AAAA-MM)</label>
+        <input type="month" id="cierrePeriodo" style="max-width:200px">
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Ejemplo: 2026-10 para octubre de 2026 (oct-26).</p>
+      </div>
+      <div class="full notice info" style="font-size:13px;margin-bottom:0">
+        <strong>Reglas del cierre:</strong>
+        <ul style="margin:4px 0 0;padding-left:18px">
+          <li>Se calcula con el <strong>VALOR CON IVA</strong> de cada suscripción activa.</li>
+          <li>Suscripciones inactivadas antes de este mes NO generan cobro.</li>
+          <li>Si el mes ya fue cerrado previamente, este proceso actualiza los valores sin duplicar filas.</li>
+        </ul>
+      </div>
+      <div class="full notice bad" id="cierreErr" hidden></div>
+    </div>
+  </div>
+  <div class="dlg-f">
+    <button class="btn sec" data-close>Cancelar</button>
+    <button class="btn ok" id="cierreOk">Ejecutar cierre mensual</button>
+  </div></dialog>
+
+<!-- Completar códigos XC -->
+<dialog id="dXc" style="max-width:680px"><div class="dlg-h"><h3>Completar código XC_SUBSCRIPTIONNAME__C</h3><button class="x" data-close aria-label="Cerrar">×</button></div>
+  <div class="dlg-b">
+    <p style="margin-top:0;font-size:13.5px">Asigne códigos XC a las altas pendientes mediante cruce masivo por documento o de forma directa.</p>
+    
+    <div style="background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:14px">
+      <h4 style="margin:0 0 8px;font-size:13.5px">Opción A: Carga masiva por cruce de documento</h4>
+      <p class="muted" style="font-size:12.5px;margin:0 0 8px">Suba un Excel o CSV con columnas: <code>DOC. ASOCIADO</code> (o <code>DOCUMENTO</code>), <code>XC_SUBSCRIPTIONNAME__C</code>, y opcionalmente <code>ASISTENCIA</code>.</p>
+      <input type="file" id="xcArchivo" accept=".xlsx,.xls,.csv" style="margin-bottom:8px">
+      <div id="xcInfo"></div>
+    </div>
+
+    <div style="background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px">
+      <h4 style="margin:0 0 8px;font-size:13.5px">Opción B: Edición manual directa</h4>
+      <div class="grid2">
+        <div><label for="xcDocManual">Documento del asociado</label><input type="text" id="xcDocManual" placeholder="Ej: 1020304050"></div>
+        <div><label for="xcCodManual">Código XC_SUBSCRIPTIONNAME__C</label><input type="text" id="xcCodManual" placeholder="Ej: XC-000123"></div>
+      </div>
+    </div>
+    <div class="notice bad" id="xcErr" hidden style="margin-top:10px"></div>
+  </div>
+  <div class="dlg-f">
+    <button class="btn sec" data-close>Cerrar</button>
+    <button class="btn" id="xcOk">Aplicar cambios</button>
+  </div></dialog>
+
+<!-- Edición rápida de XC individual -->
+<dialog id="dEditXcModal" style="max-width:440px"><div class="dlg-h"><h3>Asignar código XC</h3><button class="x" data-close aria-label="Cerrar">×</button></div>
+  <div class="dlg-b">
+    <p style="margin-top:0;font-size:13px" id="editXcDetalle"></p>
+    <label for="editXcInput">Código XC_SUBSCRIPTIONNAME__C</label>
+    <input type="text" id="editXcInput" placeholder="Ej: XC-009988">
+    <div class="notice bad" id="editXcErr" hidden style="margin-top:8px"></div>
+  </div>
+  <div class="dlg-f">
+    <button class="btn sec" data-close>Cancelar</button>
+    <button class="btn" id="editXcOk">Guardar código XC</button>
+  </div></dialog>
 
 <!-- Cargas masivas por Excel -->
 <dialog id="dMasiva"><div class="dlg-h"><h3>Carga masiva por Excel</h3><button class="x" data-close aria-label="Cerrar">×</button></div>

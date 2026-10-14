@@ -140,156 +140,947 @@ $('#sCsv').addEventListener('click', () => {
   descargarCSV(`Novedades_${SOL.periodo}_${new Date().toISOString().slice(0, 10)}.csv`, cols, lista);
 });
 
-/* ==================== CONSOLIDADO ==================== */
-async function cargarConsolidado() {
-  const eid = $('#cEmpresa').value;
+/* ==================== CONSOLIDADO DE CONCILIACIÓN ==================== */
+let CONSOLIDADO_STATE = { filas: [], periodos: [], kpis: {}, modo: 'test', pagina: 1, total_paginas: 1, total: 0 };
+let CONSOLIDADO_PAGINA = 1;
+const CONSOLIDADO_POR_PAGINA = 50;
+let IMP_FILAS_NORMALIZADAS = [];
+let IMP_METRICAS = null;
+
+const COLUMNAS_BASE_CONSOLIDADO = [
+  'NIT', 'CONVENIO / EMPRESA', 'XC_SUBSCRIPTIONNAME__C', 'ESTADO', 'CANAL DE ATENCIÓN',
+  'FECHA DE CARGUE', 'FECHA DE CORTE', 'ASOCIADO', 'DOC. ASOCIADO', 'FECHA DE RETIRO',
+  'ASISTENCIA', 'VALOR CON IVA', 'VALOR SIN IVA',
+  // Meses dinámicos van aquí en la tabla y en descargas
+  'TITULAR', 'TIPO DOC.', 'NUMERO DE IDENTIFICACIÓN', 'FECHA DE NACIMIENTO', 'CELULAR',
+  'CORREO', 'CIUDAD O MUNICIPIO', 'DIRECCIÓN PREDIO', 'EDAD',
+  'NOMBRE BENEFICIARIO 1', 'TIPO DE DOC. BENEFICIARIO 1', 'DOCUMENTO NÚMERO BENEFICIARIO', 'PARENTESCO', '%',
+  'NOMBRE BENEFICIARIO 2', 'TIPO DE DOC. BENEFICIARIO 2', 'DOCUMENTO NÚMERO BENEFICIARIO 2', 'PARENTESCO2', '%2',
+  'NOMBRE BENEFICIARIO 3', 'TIPO DE DOC. BENEFICIARIO 3', 'DOCUMENTO NÚMERO BENEFICIARIO 3', 'PARENTESCO4', '%3'
+];
+
+function clientEtiquetaPeriodo(p) {
+  if (!p || !/^\d{4}-\d{2}$/.test(p)) return p || '';
+  const [y, m] = p.split('-');
+  const n = parseInt(m, 10);
+  const meses2025 = ['', 'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
+  const mesesAbrev = ['', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  if (y === '2025') return meses2025[n] || p;
+  return `${mesesAbrev[n] || m}-${y.slice(2)}`;
+}
+
+function clientPeriodoDeEtiqueta(et) {
+  if (!et) return null;
+  const s = String(et).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const m25 = { enero:'2025-01', febrero:'2025-02', marzo:'2025-03', abril:'2025-04', mayo:'2025-05', junio:'2025-06',
+    julio:'2025-07', agosto:'2025-08', septiembre:'2025-09', octubre:'2025-10', noviembre:'2025-11', diciembre:'2025-12' };
+  if (m25[s]) return m25[s];
+  const m = s.match(/^([a-z]{3})[-_/]?(\d{2,4})$/);
+  if (m) {
+    const meses = { ene:'01', feb:'02', mar:'03', abr:'04', may:'05', jun:'06', jul:'07', ago:'08', sep:'09', oct:'10', nov:'11', dic:'12' };
+    const numMes = meses[m[1]];
+    let anio = m[2];
+    if (anio.length === 2) anio = '20' + anio;
+    if (numMes) return `${anio}-${numMes}`;
+  }
+  const iso = s.match(/^(\d{4})[-/.](\d{2})$/);
+  if (iso) return `${iso[1]}-${iso[2]}`;
+  return null;
+}
+
+function normalizarHeader(h) {
+  return String(h || '')
+    .trim()
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+}
+
+async function cargarConsolidado(pagina = 1) {
+  CONSOLIDADO_PAGINA = pagina;
+  const eid = $('#cEmpresa').value || undefined;
+  const estado = $('#cEstado').value || undefined;
+  const solo_sin_xc = $('#cSoloSinXc').checked || undefined;
+  const q = $('#cQ').value.trim() || undefined;
+
   const [d, portal] = await Promise.all([
-    api('/api/admin', { method: 'POST', body: { accion: 'consolidado', empresa_id: eid || undefined } }),
-    eid ? api('/api/portal?empresa_id=' + eid) : null
+    api('/api/admin', {
+      method: 'POST',
+      body: {
+        accion: 'consolidado_conciliacion_listar',
+        empresa_id: eid,
+        estado,
+        solo_sin_xc,
+        q,
+        pagina: CONSOLIDADO_PAGINA,
+        por_pagina: CONSOLIDADO_POR_PAGINA
+      }
+    }),
+    eid ? api('/api/portal?empresa_id=' + eid).catch(() => null) : null
   ]);
-  CONS = d.filas;
-  $('#cPortal').hidden = !eid; $('#cPortal').href = '/portal?empresa_id=' + eid;
-  const activas = CONS.filter(c => c.estado === 'activo');
-  const tot = activas.reduce((a, c) => a + c.valor_mensual, 0);
-  const k = portal ? portal.resumen : null;
-  $('#cKpis').innerHTML = (k ? [
-    ['Titulares', numero(k.titulares)], ['Personas cubiertas', numero(k.personas)], ['Asistencias', numero(k.asistencias)],
-    ['Valor mensual', pesos(k.valor_total)], ...(portal.empresa.modelo === 2 ? [[`Total a pagar (−${k.descuento_pct} %)`, pesos(k.total_a_pagar)]] : [])
-  ] : [['Empresas activas', numero(new Set(activas.map(c => c.empresa_id)).size)], ['Titulares', numero(new Set(activas.map(c => c.empresa_id + ':' + c.titular_num_doc)).size)],
-    ['Asistencias', numero(activas.length)], ['Valor mensual (sin descuentos)', pesos(tot)]])
-    .map(([l, v]) => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div></div>`).join('');
+
+  CONSOLIDADO_STATE = d;
+  CONS = d.filas; // Para compatibilidad con otras funciones
+
+  $('#cPortal').hidden = !eid;
+  if (eid) $('#cPortal').href = '/portal?empresa_id=' + eid;
+
+  // Actualizar Banner de Modo Prueba / Producción
+  const esPrueba = d.modo === 'test';
+  const banner = $('#cModoBanner');
+  if (esPrueba) {
+    banner.className = 'notice warn';
+    banner.style.borderLeft = '4px solid var(--orange)';
+    $('#cModoTag').textContent = 'MODO PRUEBA ACTIVO';
+    $('#cModoDesc').innerHTML = 'Operando sobre tablas aisladas de prueba (<code>consolidado_conciliacion_test</code>). Los datos de producción NO se tocan.';
+    $('#cToggleModo').textContent = 'Cambiar a Producción';
+    $('#cToggleModo').style.background = '#173A8C';
+    $('#cToggleModo').style.borderColor = '#173A8C';
+    $('#cSembrar').hidden = false;
+    $('#cResetTest').hidden = false;
+  } else {
+    banner.className = 'notice bad';
+    banner.style.borderLeft = '4px solid var(--red)';
+    $('#cModoTag').textContent = 'MODO PRODUCCIÓN ACTIVO';
+    $('#cModoDesc').innerHTML = '<strong>ATENCIÓN:</strong> Operando sobre tablas oficiales de producción (<code>consolidado_conciliacion</code>).';
+    $('#cToggleModo').textContent = 'Cambiar a Modo Prueba';
+    $('#cToggleModo').style.background = 'var(--muted)';
+    $('#cToggleModo').style.borderColor = 'var(--muted)';
+    $('#cSembrar').hidden = true;
+    $('#cResetTest').hidden = true;
+  }
+
+  // KPIs
+  const k = d.kpis || {};
+  $('#cKpis').innerHTML = [
+    ['Suscripciones totales', numero(k.total || 0), `${numero(k.personas_unicas || 0)} personas`],
+    ['Activas', numero(k.activas || 0), 'Cobran en el mes', 'ok'],
+    ['Inactivas', numero(k.inactivas || 0), 'Retiradas'],
+    ['Pendientes de XC', numero(k.pendientes_xc || 0), k.pendientes_xc ? 'Requieren código XC' : 'Al día', k.pendientes_xc ? 'hl' : ''],
+    ['Personas con >1 asistencia', numero(k.personas_multi_asistencia || 0), 'Suscripciones múltiples'],
+    ['Valor mensual activo', pesos(k.valor_total_activo || 0), 'Con IVA']
+  ].map(([l, v, d2, c]) => `<div class="kpi ${c || ''}"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="d">${esc(d2)}</div></div>`).join('');
+
   pintarConsolidado();
 }
-function pintarConsolidado() {
-  const q = $('#cQ').value.trim().toLowerCase();
-  const lista = CONS.filter(c => !q || [c.titular_num_doc, c.titular_nombre].some(v => String(v || '').toLowerCase().includes(q)));
-  const max = 1500;
-  $('#cTb').innerHTML = lista.slice(0, max).map(c => {
-    const act = c.estado === 'activo';
-    return `<tr style="${act ? '' : 'opacity:0.5;background:#f9f9f9'}">
-      <td>${esc(c.empresa_nombre)} ${act ? '' : '<span class="badge" style="background:#e0e0e0;color:#666;font-size:10px;padding:2px 4px;border-radius:4px">Retirado</span>'}</td>
-      <td>${esc(c.titular_nombre)}</td>
-      <td class="nw">${esc(c.titular_num_doc)}</td><td>${esc(c.asistencia)}</td><td>${esc(c.plan)}${c.mascota ? `<small class="muted">${esc(c.mascota)}</small>` : ''}</td>
-      <td>${esc(PAGO_TXT[c.pago] || '')}<small class="muted" style="display:block">Mod. ${c.modelo_aplicado || 1}</small></td><td class="num">${numero(c.personas)}</td><td class="num">${pesos(c.valor_mensual)}</td>
-      <td class="nw">${esc(c.fecha_alta_txt || '')}</td><td>${c.origen === 'importado' ? 'Carga inicial' : 'Formulario'}</td></tr>`;
-  }).join('');
-  $('#cVacio').hidden = lista.length > 0;
-  const numActivas = lista.filter(c => c.estado === 'activo').length;
-  $('#cCuenta').textContent = `${lista.length} registros en total (${numActivas} activos)${lista.length > max ? ` (se muestran ${max}; use la búsqueda o descargue el CSV)` : ''}`;
-}
-$('#cEmpresa').addEventListener('change', () => cargarConsolidado().catch(x => toast(x.message)));
-$('#cQ').addEventListener('input', pintarConsolidado);
-$('#cCsv').addEventListener('click', () => {
 
-  if (!CONS.length) return toast('No hay datos para descargar.');
-  const MESES = ['MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE', 'ene-26', 'feb-26', 'mar-26', 'abr-26', 'may-26', 'jun-26', 'jul-26', 'ago-26', 'sep-26'];
-  const cols = [
-    ['empresa_nit', 'NIT'],
-    ['empresa_nombre', 'CONVENIO / EMPRESA'],
-    [c => `${c.asistencia} - ${c.plan}`, 'XC_SUBSCRIPTIONNAME__C'],
-    [c => c.estado === 'activo' ? 'Activo' : 'Retirado', 'ESTADO'],
-    [c => c.origen === 'formulario' ? 'Venta Directa' : 'Carga', 'CANAL DE ATENCIÓN'],
-    ['fecha_alta_txt', 'FECHA DE CARGUE'],
-    [() => '', 'FECHA DE CORTE'],
-    [() => '', 'ASOCIADO'],
-    [() => '', 'DOC. ASOCIADO'],
-    ['fecha_baja', 'FECHA DE RETIRO'],
-    ['asistencia', 'ASISTENCIA'],
-    ['valor_mensual', 'VALOR CON IVA'],
-    [c => Math.round(c.valor_mensual / 1.19), 'VALOR SIN IVA'],
-    ...MESES.map(m => [() => '', m]),
-    ['titular_nombre', 'TITULAR'],
-    [c => (c.datos || {}).titular_tipo_doc || '', 'TIPO DOC.'],
-    ['titular_num_doc', 'NUMERO DE IDENTIFICACIÓN'],
-    [c => (c.datos || {}).titular_fecha_nac || '', 'FECHA DE NACIMIENTO'],
-    [c => (c.datos || {}).titular_celular || '', 'CELULAR'],
-    [c => (c.datos || {}).titular_correo || '', 'CORREO'],
-    [c => (c.datos || {}).titular_ciudad || '', 'CIUDAD O MUNICIPIO'],
-    [c => (c.datos || {}).titular_direccion || '', 'DIRECCIÓN PREDIO'],
-    [c => {
-      const f = (c.datos || {}).titular_fecha_nac;
-      if (!f) return '';
-      const parts = f.split('/');
-      if (parts.length === 3) {
-        const fn = new Date(parts[2], parts[1]-1, parts[0]);
-        if (isNaN(fn)) return '';
-        const ageDifMs = Date.now() - fn.getTime();
-        const ageDate = new Date(ageDifMs);
-        return Math.abs(ageDate.getUTCFullYear() - 1970);
-      }
-      return '';
-    }, 'EDAD'],
-    [c => (c.datos || {}).beneficiario1_nombre || '', 'NOMBRE BENEFICIARIO 1'],
-    [c => (c.datos || {}).beneficiario1_tipo_doc || '', 'TIPO DE DOC. BENEFICIARIO 1'],
-    [c => (c.datos || {}).beneficiario1_num_doc || '', 'DOCUMENTO NÚMERO BENEFICIARIO'],
-    [c => (c.datos || {}).beneficiario1_parentesco || '', 'PARENTESCO'],
-    [c => (c.datos || {}).beneficiario1_porcentaje || '', '%'],
-    [c => (c.datos || {}).beneficiario2_nombre || '', 'NOMBRE BENEFICIARIO 2'],
-    [c => (c.datos || {}).beneficiario2_tipo_doc || '', 'TIPO DE DOC. BENEFICIARIO 2'],
-    [c => (c.datos || {}).beneficiario2_num_doc || '', 'DOCUMENTO NÚMERO BENEFICIARIO 2'],
-    [c => (c.datos || {}).beneficiario2_parentesco || '', 'PARENTESCO2'],
-    [c => (c.datos || {}).beneficiario2_porcentaje || '', '%2'],
-    [c => (c.datos || {}).beneficiario3_nombre || '', 'NOMBRE BENEFICIARIO 3'],
-    [c => (c.datos || {}).beneficiario3_tipo_doc || '', 'TIPO DE DOC. BENEFICIARIO 3'],
-    [c => (c.datos || {}).beneficiario3_num_doc || '', 'DOCUMENTO NÚMERO BENEFICIARIO 3'],
-    [c => (c.datos || {}).beneficiario3_parentesco || '', 'PARENTESCO4'],
-    [c => (c.datos || {}).beneficiario3_porcentaje || '', '%3']
-  ];
-  const emp = $('#cEmpresa').value ? EMPRESAS.find(e => String(e.id) === $('#cEmpresa').value).nombre.replace(/[^\w]+/g, '_') : 'Todas';
-  descargarCSV(`Conciliacion_${emp}_${new Date().toISOString().slice(0, 10)}.csv`, cols, CONS);
+function pintarConsolidado() {
+  const d = CONSOLIDADO_STATE;
+  const filas = d.filas || [];
+  const periodos = d.periodos || [];
+
+  // Paginación
+  const hayPags = d.total_paginas > 1;
+  $('#cPaginacion').hidden = !hayPags;
+  if (hayPags) {
+    $('#cPagTxt').textContent = `Pág. ${d.pagina} de ${d.total_paginas} (${numero(d.total)} suscripciones)`;
+    $('#cPagAnt').disabled = d.pagina <= 1;
+    $('#cPagSig').disabled = d.pagina >= d.total_paginas;
+  }
+  $('#cCuenta').textContent = `${numero(d.total)} suscripciones en total (${numero(d.kpis?.activas || 0)} activas)${hayPags ? ` · Página ${d.pagina} de ${d.total_paginas}` : ''}`;
+
+  // Encabezados dinámicos
+  let ths = `
+    <th>NIT</th>
+    <th>CONVENIO / EMPRESA</th>
+    <th>XC_SUBSCRIPTIONNAME__C</th>
+    <th>ESTADO</th>
+    <th>CANAL</th>
+    <th>CARGUE</th>
+    <th>CORTE</th>
+    <th>ASOCIADO</th>
+    <th>DOC. ASOCIADO</th>
+    <th>RETIRO</th>
+    <th>ASISTENCIA</th>
+    <th class="num">VALOR C/IVA</th>
+    <th class="num">VALOR S/IVA</th>
+  `;
+
+  periodos.forEach(p => {
+    ths += `<th class="num" style="background:#eef3ff;color:#173A8C">${esc(clientEtiquetaPeriodo(p))}</th>`;
+  });
+
+  ths += `
+    <th>TITULAR</th>
+    <th>TIPO DOC.</th>
+    <th>NÚMERO DOC.</th>
+    <th>FECHA NAC.</th>
+    <th>CELULAR</th>
+    <th>CORREO</th>
+    <th>CIUDAD</th>
+    <th>DIRECCIÓN</th>
+    <th>EDAD</th>
+    <th>BENEFICIARIO 1</th>
+    <th>DOC. BENEF. 1</th>
+    <th>PARENTESCO 1</th>
+    <th>% 1</th>
+    <th>BENEFICIARIO 2</th>
+    <th>DOC. BENEF. 2</th>
+    <th>PARENTESCO 2</th>
+    <th>% 2</th>
+    <th>BENEFICIARIO 3</th>
+    <th>DOC. BENEF. 3</th>
+    <th>PARENTESCO 3</th>
+    <th>% 3</th>
+  `;
+
+  $('#cThead').innerHTML = `<tr>${ths}</tr>`;
+
+  // Cuerpo de la tabla
+  if (!filas.length) {
+    $('#cTb').innerHTML = '';
+    $('#cVacio').hidden = false;
+    return;
+  }
+  $('#cVacio').hidden = true;
+
+  $('#cTb').innerHTML = filas.map(r => {
+    const act = r.estado === 'Activo';
+    const sinXc = !r.xc_subscriptionname__c;
+    const xcHtml = sinXc
+      ? `<button type="button" class="tag invalida" style="border:0;cursor:pointer" onclick="abrirEdicionXc('${r.id}', '${esc(r.titular || r.asociado || '')}', '${esc(r.doc_asociado || '')}', '${esc(r.asistencia || '')}')">Pendiente XC ✎</button>`
+      : `<span style="font-family:monospace;font-size:12px">${esc(r.xc_subscriptionname__c)}</span>`;
+
+    let tds = `
+      <td class="nw">${esc(r.nit || '')}</td>
+      <td>${esc(r.convenio_empresa || '')}</td>
+      <td class="nw">${xcHtml}</td>
+      <td><span class="tag ${act ? 'alta' : 'invalida'}">${esc(r.estado)}</span></td>
+      <td>${esc(r.canal_atencion || '')}</td>
+      <td class="nw">${esc(r.fecha_cargue || '')}</td>
+      <td class="nw">${esc(r.fecha_corte || '')}</td>
+      <td>${esc(r.asociado || '')}</td>
+      <td class="nw"><strong>${esc(r.doc_asociado || '')}</strong></td>
+      <td class="nw">${esc(r.fecha_retiro || '')}</td>
+      <td><strong>${esc(r.asistencia || '')}</strong></td>
+      <td class="num">${r.valor_con_iva != null ? pesos(r.valor_con_iva) : ''}</td>
+      <td class="num muted">${r.valor_sin_iva != null ? pesos(r.valor_sin_iva) : '—'}</td>
+    `;
+
+    periodos.forEach(p => {
+      const v = r.meses ? r.meses[p] : null;
+      tds += `<td class="num" style="background:${v != null ? '#fafcff' : '#fcfcfc'}">${v != null ? pesos(v) : '<span class="muted">—</span>'}</td>`;
+    });
+
+    tds += `
+      <td>${esc(r.titular || '')}</td>
+      <td>${esc(r.tipo_doc || '')}</td>
+      <td class="nw">${esc(r.numero_identificacion || '')}</td>
+      <td class="nw">${esc(r.fecha_nacimiento || '')}</td>
+      <td class="nw">${esc(r.celular || '')}</td>
+      <td>${esc(r.correo || '')}</td>
+      <td>${esc(r.ciudad_municipio || '')}</td>
+      <td>${esc(r.direccion_predio || '')}</td>
+      <td class="num">${r.edad != null ? r.edad : ''}</td>
+      <td>${esc(r.nombre_beneficiario_1 || '')}</td>
+      <td class="nw">${esc(r.documento_numero_beneficiario || '')}</td>
+      <td>${esc(r.parentesco || '')}</td>
+      <td class="num">${r.porcentaje || ''}</td>
+      <td>${esc(r.nombre_beneficiario_2 || '')}</td>
+      <td class="nw">${esc(r.documento_numero_beneficiario_2 || '')}</td>
+      <td>${esc(r.parentesco2 || '')}</td>
+      <td class="num">${r.porcentaje2 || ''}</td>
+      <td>${esc(r.nombre_beneficiario_3 || '')}</td>
+      <td class="nw">${esc(r.documento_numero_beneficiario_3 || '')}</td>
+      <td>${esc(r.parentesco4 || '')}</td>
+      <td class="num">${r.porcentaje3 || ''}</td>
+    `;
+
+    return `<tr style="${act ? '' : 'opacity:0.6;background:#fbfbfb'}">${tds}</tr>`;
+  }).join('');
+}
+
+// Filtros y búsqueda
+$('#cEmpresa').addEventListener('change', () => cargarConsolidado(1).catch(x => toast(x.message)));
+$('#cEstado').addEventListener('change', () => cargarConsolidado(1).catch(x => toast(x.message)));
+$('#cSoloSinXc').addEventListener('change', () => cargarConsolidado(1).catch(x => toast(x.message)));
+let searchTimer = null;
+$('#cQ').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => cargarConsolidado(1).catch(x => toast(x.message)), 280);
 });
 
-// Importación del consolidado inicial
-let IMP = [];
-$('#cImportar').addEventListener('click', () => { $('#impEmpresa').value = $('#cEmpresa').value; $('#impArchivo').value = ''; $('#impInfo').innerHTML = ''; IMP = []; $('#impOk').disabled = true; $('#dImp').showModal(); });
-$('#impPlantilla').addEventListener('click', () => {
+// Paginación
+$('#cPagAnt').addEventListener('click', () => {
+  if (CONSOLIDADO_PAGINA > 1) cargarConsolidado(CONSOLIDADO_PAGINA - 1);
+});
+$('#cPagSig').addEventListener('click', () => {
+  if (CONSOLIDADO_PAGINA < CONSOLIDADO_STATE.total_paginas) cargarConsolidado(CONSOLIDADO_PAGINA + 1);
+});
 
+// Interruptor Modo Prueba / Modo Producción
+$('#cToggleModo').addEventListener('click', async () => {
+  const actual = CONSOLIDADO_STATE.modo;
+  const nuevo = actual === 'test' ? 'prod' : 'test';
+  const msg = nuevo === 'prod'
+    ? '¿Está seguro de activar el MODO PRODUCCIÓN?\n\nTodas las consultas, aprobaciones de altas/bajas e importaciones operarán sobre las tablas definitivas de producción (consolidado_conciliacion).'
+    : '¿Desea volver al MODO PRUEBA?\n\nOperará sobre las tablas de prueba (consolidado_conciliacion_test) sin tocar datos reales.';
+  if (!confirm(msg)) return;
+
+  try {
+    const r = await api('/api/admin', { method: 'POST', body: { accion: 'consolidado_conciliacion_modo', modo: nuevo } });
+    toast(r.mensaje);
+    await cargarConsolidado(1);
+  } catch (x) {
+    toast('Error cambiando de modo: ' + x.message);
+  }
+});
+
+// Sembrar datos de ejemplo ficticios
+$('#cSembrar').addEventListener('click', async () => {
+  if (!confirm('¿Cargar registros ficticios de ejemplo en las tablas de prueba para validar la visualización y conciliación?')) return;
+  try {
+    const r = await api('/api/admin', { method: 'POST', body: { accion: 'consolidado_conciliacion_sembrar_ejemplo' } });
+    toast(`Datos de prueba cargados: ${r.insertados} registros y ${r.meses} valores mensuales.`);
+    await cargarConsolidado(1);
+  } catch (x) {
+    toast('Error cargando ejemplo: ' + x.message);
+  }
+});
+
+// Reiniciar tablas de prueba
+$('#cResetTest').addEventListener('click', async () => {
+  if (!confirm('¿CONFIRMA reiniciar y vaciar las tablas de prueba (consolidado_conciliacion_test y consolidado_meses_test)?\n\nLos datos de producción no se tocarán.')) return;
+  try {
+    const r = await api('/api/admin', { method: 'POST', body: { accion: 'consolidado_conciliacion_reset_test' } });
+    toast(r.mensaje);
+    await cargarConsolidado(1);
+  } catch (x) {
+    toast('Error reiniciando prueba: ' + x.message);
+  }
+});
+
+// Descargar plantilla vacía
+function generarPlantillaVacia() {
   const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.json_to_sheet([
-    { titular_num_doc: '1020304050', titular_nombre: 'Nombre Apellido', titular_tipo_doc: 'CC', asistencia: 'Doctor 360', plan: 'Light', valor_mensual: '25000', personas: '3', pago: 'Nomina', mascota: '', modelo: '1' },
-    { titular_num_doc: '1020304050', titular_nombre: 'Nombre Apellido', titular_tipo_doc: 'CC', asistencia: 'Protección Hogar', plan: 'Hogar Mascotas', valor_mensual: '12000', personas: '1', pago: 'Nomina', mascota: 'Luna (perro)', modelo: '1' }
-  ]);
-  XLSX.utils.book_append_sheet(wb, ws, "Datos");
+  const mesesHistoricos = ['MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE',
+    'ene-26', 'feb-26', 'mar-26', 'abr-26', 'may-26', 'jun-26', 'jul-26', 'ago-26', 'sep-26'];
+
+  const headers = [
+    'NIT', 'CONVENIO / EMPRESA', 'XC_SUBSCRIPTIONNAME__C', 'ESTADO', 'CANAL DE ATENCIÓN',
+    'FECHA DE CARGUE', 'FECHA DE CORTE', 'ASOCIADO', 'DOC. ASOCIADO', 'FECHA DE RETIRO',
+    'ASISTENCIA', 'VALOR CON IVA', 'VALOR SIN IVA',
+    ...mesesHistoricos,
+    'TITULAR', 'TIPO DOC.', 'NUMERO DE IDENTIFICACIÓN', 'FECHA DE NACIMIENTO', 'CELULAR',
+    'CORREO', 'CIUDAD O MUNICIPIO', 'DIRECCIÓN PREDIO', 'EDAD',
+    'NOMBRE BENEFICIARIO 1', 'TIPO DE DOC. BENEFICIARIO 1', 'DOCUMENTO NÚMERO BENEFICIARIO', 'PARENTESCO', '%',
+    'NOMBRE BENEFICIARIO 2', 'TIPO DE DOC. BENEFICIARIO 2', 'DOCUMENTO NÚMERO BENEFICIARIO 2', 'PARENTESCO2', '%2',
+    'NOMBRE BENEFICIARIO 3', 'TIPO DE DOC. BENEFICIARIO 3', 'DOCUMENTO NÚMERO BENEFICIARIO 3', 'PARENTESCO4', '%3'
+  ];
+
+  const filaEjemplo = {
+    'NIT': '900123456',
+    'CONVENIO / EMPRESA': 'ACME S.A.S.',
+    'XC_SUBSCRIPTIONNAME__C': 'XC-EJEMPLO-001',
+    'ESTADO': 'Activo',
+    'CANAL DE ATENCIÓN': 'Venta Directa',
+    'FECHA DE CARGUE': '2025-03-01',
+    'FECHA DE CORTE': '',
+    'ASOCIADO': 'Juan Carlos Pérez Gómez',
+    'DOC. ASOCIADO': '1020304050',
+    'FECHA DE RETIRO': '',
+    'ASISTENCIA': 'Doctor 360',
+    'VALOR CON IVA': 25000,
+    'VALOR SIN IVA': '',
+    'MARZO': 25000,
+    'ABRIL': 25000,
+    'MAYO': 25000,
+    'JUNIO': 25000,
+    'JULIO': 25000,
+    'AGOSTO': 25000,
+    'SEPTIEMBRE': 25000,
+    'OCTUBRE': 25000,
+    'NOVIEMBRE': 25000,
+    'DICIEMBRE': 25000,
+    'ene-26': 25000,
+    'feb-26': 25000,
+    'mar-26': 25000,
+    'abr-26': 25000,
+    'may-26': 25000,
+    'jun-26': 25000,
+    'jul-26': 25000,
+    'ago-26': 25000,
+    'sep-26': 25000,
+    'TITULAR': 'Juan Carlos Pérez Gómez',
+    'TIPO DOC.': 'CC',
+    'NUMERO DE IDENTIFICACIÓN': '1020304050',
+    'FECHA DE NACIMIENTO': '1985-05-15',
+    'CELULAR': '3001234567',
+    'CORREO': 'juan.perez@ejemplo.com',
+    'CIUDAD O MUNICIPIO': 'Bogotá D.C.',
+    'DIRECCIÓN PREDIO': 'Calle 100 # 15-20',
+    'EDAD': 40,
+    'NOMBRE BENEFICIARIO 1': 'María Gómez',
+    'TIPO DE DOC. BENEFICIARIO 1': 'CC',
+    'DOCUMENTO NÚMERO BENEFICIARIO': '1098765432',
+    'PARENTESCO': 'Cónyuge',
+    '%': '100',
+    'NOMBRE BENEFICIARIO 2': '',
+    'TIPO DE DOC. BENEFICIARIO 2': '',
+    'DOCUMENTO NÚMERO BENEFICIARIO 2': '',
+    'PARENTESCO2': '',
+    '%2': '',
+    'NOMBRE BENEFICIARIO 3': '',
+    'TIPO DE DOC. BENEFICIARIO 3': '',
+    'DOCUMENTO NÚMERO BENEFICIARIO 3': '',
+    'PARENTESCO4': '',
+    '%3': ''
+  };
+
+  const ws = XLSX.utils.json_to_sheet([filaEjemplo], { header: headers });
+  XLSX.utils.book_append_sheet(wb, ws, "Consolidado");
+
   const wsInst = XLSX.utils.aoa_to_sheet([
-    ["Instrucciones para el consolidado"],
-    ["1. Llene los datos requeridos. NO cambie los nombres de las columnas."],
-    ["2. Datos opcionales: titular_tipo_doc, personas, pago (Nomina, Empresa, Cofinanciado), mascota, modelo."]
+    ["Instrucciones para el Consolidado de Conciliación"],
+    ["1. Mantenga exactamente los nombres y el orden de las columnas."],
+    ["2. La unidad de registro es la SUSCRIPCIÓN (persona + asistencia). Una persona puede tener más de una asistencia."],
+    ["3. XC_SUBSCRIPTIONNAME__C es el identificador único de la suscripción (opcional en altas nuevas)."],
+    ["4. VALOR SIN IVA se deja en blanco si no está definido."],
+    ["5. Los meses nuevos (oct-26 en adelante) se generan automáticamente mediante cierres mensuales."]
   ]);
   XLSX.utils.book_append_sheet(wb, wsInst, "Instrucciones");
-  XLSX.writeFile(wb, "Plantilla_consolidado.xlsx");
-});
-$('#impArchivo').addEventListener('change', async e => {
 
-  const f = e.target.files[0]; IMP = []; $('#impOk').disabled = true; if (!f) return;
-  let filas = [];
-  if (f.name.endsWith('.csv')) {
-    const txt = await f.text(); filas = leerCSV(txt);
-  } else {
-    const data = await f.arrayBuffer();
-    const wb = XLSX.read(data);
-    filas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
-  }
-  const alias = { documento: 'titular_num_doc', cedula: 'titular_num_doc', num_doc: 'titular_num_doc', nombre: 'titular_nombre', titular: 'titular_nombre',
-    tipo_doc: 'titular_tipo_doc', valor: 'valor_mensual', personas_cubiertas: 'personas' };
-  IMP = filas.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [alias[k] || k, v])));
-  const faltan = ['titular_num_doc', 'titular_nombre', 'asistencia', 'plan'].filter(k => IMP.length && !(k in IMP[0]));
-  $('#impInfo').innerHTML = !IMP.length ? '<div class="notice bad">El archivo está vacío.</div>'
-    : faltan.length ? `<div class="notice bad">Faltan columnas: ${faltan.join(', ')}</div>`
-    : `<div class="notice info">${IMP.length} filas listas para cargar.</div>`;
-  $('#impOk').disabled = !IMP.length || faltan.length > 0;
-});
-$('#impOk').addEventListener('click', async () => {
+  XLSX.writeFile(wb, "Plantilla_Consolidado_Conciliacion.xlsx");
+}
+$('#cPlantilla').addEventListener('click', generarPlantillaVacia);
+$('#impPlantilla').addEventListener('click', generarPlantillaVacia);
 
-  if (!$('#impEmpresa').value) return toast('Elija la empresa.');
-  $('#impOk').disabled = true;
+// Descargar consolidado actual completo
+async function descargarConsolidadoActual(nombreArchivo = null) {
   try {
-    const r = await api('/api/admin', { method: 'POST', body: { accion: 'importar', empresa_id: $('#impEmpresa').value, filas: IMP } });
-    $('#dImp').close(); toast(`Cargadas ${r.cargadas}. Omitidas por estar ya activas: ${r.omitidas}.`);
-    $('#cEmpresa').value = $('#impEmpresa').value; cargarConsolidado();
+    toast('Generando descarga del consolidado...');
+    const eid = $('#cEmpresa').value || undefined;
+    const estado = $('#cEstado').value || undefined;
+    const r = await api('/api/admin', {
+      method: 'POST',
+      body: { accion: 'consolidado_conciliacion_exportar', empresa_id: eid, estado }
+    });
+
+    if (!r.filas || !r.filas.length) {
+      return toast('No hay registros para descargar.');
+    }
+
+    const periodos = r.periodos || [];
+    const headers = [
+      'NIT', 'CONVENIO / EMPRESA', 'XC_SUBSCRIPTIONNAME__C', 'ESTADO', 'CANAL DE ATENCIÓN',
+      'FECHA DE CARGUE', 'FECHA DE CORTE', 'ASOCIADO', 'DOC. ASOCIADO', 'FECHA DE RETIRO',
+      'ASISTENCIA', 'VALOR CON IVA', 'VALOR SIN IVA',
+      ...periodos.map(clientEtiquetaPeriodo),
+      'TITULAR', 'TIPO DOC.', 'NUMERO DE IDENTIFICACIÓN', 'FECHA DE NACIMIENTO', 'CELULAR',
+      'CORREO', 'CIUDAD O MUNICIPIO', 'DIRECCIÓN PREDIO', 'EDAD',
+      'NOMBRE BENEFICIARIO 1', 'TIPO DE DOC. BENEFICIARIO 1', 'DOCUMENTO NÚMERO BENEFICIARIO', 'PARENTESCO', '%',
+      'NOMBRE BENEFICIARIO 2', 'TIPO DE DOC. BENEFICIARIO 2', 'DOCUMENTO NÚMERO BENEFICIARIO 2', 'PARENTESCO2', '%2',
+      'NOMBRE BENEFICIARIO 3', 'TIPO DE DOC. BENEFICIARIO 3', 'DOCUMENTO NÚMERO BENEFICIARIO 3', 'PARENTESCO4', '%3'
+    ];
+
+    const dataRows = r.filas.map(f => {
+      const obj = {
+        'NIT': f.nit || '',
+        'CONVENIO / EMPRESA': f.convenio_empresa || '',
+        'XC_SUBSCRIPTIONNAME__C': f.xc_subscriptionname__c || '',
+        'ESTADO': f.estado || '',
+        'CANAL DE ATENCIÓN': f.canal_atencion || '',
+        'FECHA DE CARGUE': f.fecha_cargue || '',
+        'FECHA DE CORTE': f.fecha_corte || '',
+        'ASOCIADO': f.asociado || '',
+        'DOC. ASOCIADO': f.doc_asociado || '',
+        'FECHA DE RETIRO': f.fecha_retiro || '',
+        'ASISTENCIA': f.asistencia || '',
+        'VALOR CON IVA': f.valor_con_iva != null ? f.valor_con_iva : '',
+        'VALOR SIN IVA': f.valor_sin_iva != null ? f.valor_sin_iva : ''
+      };
+
+      periodos.forEach(p => {
+        const et = clientEtiquetaPeriodo(p);
+        obj[et] = (f.meses && f.meses[p] != null) ? f.meses[p] : '';
+      });
+
+      obj['TITULAR'] = f.titular || '';
+      obj['TIPO DOC.'] = f.tipo_doc || '';
+      obj['NUMERO DE IDENTIFICACIÓN'] = f.numero_identificacion || '';
+      obj['FECHA DE NACIMIENTO'] = f.fecha_nacimiento || '';
+      obj['CELULAR'] = f.celular || '';
+      obj['CORREO'] = f.correo || '';
+      obj['CIUDAD O MUNICIPIO'] = f.ciudad_municipio || '';
+      obj['DIRECCIÓN PREDIO'] = f.direccion_predio || '';
+      obj['EDAD'] = f.edad != null ? f.edad : '';
+      obj['NOMBRE BENEFICIARIO 1'] = f.nombre_beneficiario_1 || '';
+      obj['TIPO DE DOC. BENEFICIARIO 1'] = f.tipo_de_doc_beneficiario_1 || '';
+      obj['DOCUMENTO NÚMERO BENEFICIARIO'] = f.documento_numero_beneficiario || '';
+      obj['PARENTESCO'] = f.parentesco || '';
+      obj['%'] = f.porcentaje || '';
+      obj['NOMBRE BENEFICIARIO 2'] = f.nombre_beneficiario_2 || '';
+      obj['TIPO DE DOC. BENEFICIARIO 2'] = f.tipo_de_doc_beneficiario_2 || '';
+      obj['DOCUMENTO NÚMERO BENEFICIARIO 2'] = f.documento_numero_beneficiario_2 || '';
+      obj['PARENTESCO2'] = f.parentesco2 || '';
+      obj['%2'] = f.porcentaje2 || '';
+      obj['NOMBRE BENEFICIARIO 3'] = f.nombre_beneficiario_3 || '';
+      obj['TIPO DE DOC. BENEFICIARIO 3'] = f.tipo_de_doc_beneficiario_3 || '';
+      obj['DOCUMENTO NÚMERO BENEFICIARIO 3'] = f.documento_numero_beneficiario_3 || '';
+      obj['PARENTESCO4'] = f.parentesco4 || '';
+      obj['%3'] = f.porcentaje3 || '';
+
+      return obj;
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(dataRows, { header: headers });
+    XLSX.utils.book_append_sheet(wb, ws, "Consolidado");
+
+    const fname = nombreArchivo || `Consolidado_Conciliacion_${r.modo}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    XLSX.writeFile(wb, fname);
+    toast('Descarga generada con éxito.');
   } catch (x) {
-    $('#impInfo').innerHTML = `<div class="notice bad"><strong>${esc(x.message)}</strong>${x.datos && x.datos.errores ? `<ul>${x.datos.errores.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}</div>`;
+    toast('Error generando descarga: ' + x.message);
+  }
+}
+$('#cCsv').addEventListener('click', () => descargarConsolidadoActual());
+$('#impBackupBtn').addEventListener('click', () => descargarConsolidadoActual(`Backup_Consolidado_${CONSOLIDADO_STATE.modo}_${Date.now()}.xlsx`));
+
+// Apertura del modal de importación histórica
+$('#cImportar').addEventListener('click', () => {
+  $('#impEmpresa').value = $('#cEmpresa').value || '';
+  $('#impArchivo').value = '';
+  $('#impPreviewArea').hidden = true;
+  $('#impInfo').innerHTML = '';
+  $('#impProgreso').hidden = true;
+  $('#impOk').disabled = true;
+  IMP_FILAS_NORMALIZADAS = [];
+  IMP_METRICAS = null;
+  $('#dImp').showModal();
+});
+
+// Lectura de Excel en navegador y generación de VISTA PREVIA OBLIGATORIA
+$('#impArchivo').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  $('#impPreviewArea').hidden = true;
+  $('#impInfo').innerHTML = '';
+  $('#impOk').disabled = true;
+  IMP_FILAS_NORMALIZADAS = [];
+  IMP_METRICAS = null;
+  if (!f) return;
+
+  try {
+    $('#impInfo').innerHTML = '<div class="notice info">Leyendo y validando archivo en el navegador…</div>';
+    let rawRows = [];
+    if (f.name.endsWith('.csv')) {
+      const txt = await f.text();
+      rawRows = leerCSV(txt);
+    } else {
+      const data = await f.arrayBuffer();
+      const wb = XLSX.read(data, { cellDates: true });
+      const firstSheet = wb.Sheets[wb.SheetNames[0]];
+      rawRows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
+    }
+
+    if (!rawRows.length) {
+      $('#impInfo').innerHTML = '<div class="notice bad">El archivo no contiene filas de datos.</div>';
+      return;
+    }
+
+    // Análisis de columnas y meses
+    const sampleKeys = Object.keys(rawRows[0]);
+    const normalizedKeyMap = {};
+    const mesesDetectados = []; // { colOriginal, periodo, etiqueta }
+
+    sampleKeys.forEach(k => {
+      const norm = normalizarHeader(k);
+      normalizedKeyMap[k] = norm;
+      const p = clientPeriodoDeEtiqueta(norm);
+      if (p) {
+        mesesDetectados.push({ colOriginal: k, periodo: p, etiqueta: clientEtiquetaPeriodo(p) });
+      }
+    });
+
+    // Mapeo canónico de columnas de registro
+    const mapaCampos = {
+      'NIT': 'nit',
+      'CONVENIO / EMPRESA': 'convenio_empresa',
+      'CONVENIO': 'convenio_empresa',
+      'EMPRESA': 'convenio_empresa',
+      'XC_SUBSCRIPTIONNAME__C': 'xc_subscriptionname__c',
+      'XC_SUBSCRIPTIONNAME': 'xc_subscriptionname__c',
+      'ESTADO': 'estado',
+      'CANAL DE ATENCION': 'canal_atencion',
+      'FECHA DE CARGUE': 'fecha_cargue',
+      'FECHA DE CORTE': 'fecha_corte',
+      'ASOCIADO': 'asociado',
+      'DOC. ASOCIADO': 'doc_asociado',
+      'DOC ASOCIADO': 'doc_asociado',
+      'FECHA DE RETIRO': 'fecha_retiro',
+      'ASISTENCIA': 'asistencia',
+      'VALOR CON IVA': 'valor_con_iva',
+      'VALOR SIN IVA': 'valor_sin_iva',
+      'TITULAR': 'titular',
+      'TIPO DOC.': 'tipo_doc',
+      'TIPO DOC': 'tipo_doc',
+      'NUMERO DE IDENTIFICACION': 'numero_identificacion',
+      'FECHA DE NACIMIENTO': 'fecha_nacimiento',
+      'CELULAR': 'celular',
+      'CORREO': 'correo',
+      'CIUDAD O MUNICIPIO': 'ciudad_municipio',
+      'DIRECCION PREDIO': 'direccion_predio',
+      'EDAD': 'edad',
+      'NOMBRE BENEFICIARIO 1': 'nombre_beneficiario_1',
+      'TIPO DE DOC. BENEFICIARIO 1': 'tipo_de_doc_beneficiario_1',
+      'DOCUMENTO NUMERO BENEFICIARIO': 'documento_numero_beneficiario',
+      'PARENTESCO': 'parentesco',
+      '%': 'porcentaje',
+      'NOMBRE BENEFICIARIO 2': 'nombre_beneficiario_2',
+      'TIPO DE DOC. BENEFICIARIO 2': 'tipo_de_doc_beneficiario_2',
+      'DOCUMENTO NUMERO BENEFICIARIO 2': 'documento_numero_beneficiario_2',
+      'PARENTESCO2': 'parentesco2',
+      '%2': 'porcentaje2',
+      'NOMBRE BENEFICIARIO 3': 'nombre_beneficiario_3',
+      'TIPO DE DOC. BENEFICIARIO 3': 'tipo_de_doc_beneficiario_3',
+      'DOCUMENTO NUMERO BENEFICIARIO 3': 'documento_numero_beneficiario_3',
+      'PARENTESCO4': 'parentesco4',
+      '%3': 'porcentaje3'
+    };
+
+    // Procesar y normalizar cada fila
+    const xcsVistos = new Map();
+    let duplicadosXc = 0;
+    let sinXc = 0;
+    let conError = 0;
+    const personasAsistencias = new Map(); // key = nit:doc -> Set(asistencias)
+    const columnasConDatos = new Set();
+
+    IMP_FILAS_NORMALIZADAS = rawRows.map((raw, idx) => {
+      const normal = { meses: {} };
+      Object.entries(raw).forEach(([k, val]) => {
+        const normK = normalizedKeyMap[k];
+        const valStr = val != null ? String(val).trim() : '';
+        if (valStr !== '') columnasConDatos.add(normK);
+
+        const per = clientPeriodoDeEtiqueta(normK);
+        if (per) {
+          const numVal = parseFloat(valStr.replace(/[^0-9.-]/g, ''));
+          if (!isNaN(numVal)) normal.meses[per] = numVal;
+          return;
+        }
+
+        const campoDb = mapaCampos[normK];
+        if (campoDb) {
+          if (['valor_con_iva', 'valor_sin_iva', 'edad'].includes(campoDb)) {
+            const numVal = parseFloat(valStr.replace(/[^0-9.-]/g, ''));
+            normal[campoDb] = !isNaN(numVal) ? numVal : null;
+          } else {
+            normal[campoDb] = valStr;
+          }
+        }
+      });
+
+      // Validaciones métricas
+      const xc = normal.xc_subscriptionname__c;
+      if (xc) {
+        if (xcsVistos.has(xc)) duplicadosXc++;
+        else xcsVistos.set(xc, idx);
+      } else {
+        sinXc++;
+      }
+
+      const doc = normal.doc_asociado || normal.numero_identificacion;
+      const asis = normal.asistencia;
+      if (!doc || !asis) {
+        conError++;
+      } else {
+        const pKey = (normal.nit || '') + ':' + doc;
+        if (!personasAsistencias.has(pKey)) personasAsistencias.set(pKey, new Set());
+        personasAsistencias.get(pKey).add(asis);
+      }
+
+      return normal;
+    });
+
+    let personasMultiAsistencia = 0;
+    personasAsistencias.forEach(asists => {
+      if (asists.size > 1) personasMultiAsistencia++;
+    });
+
+    // Columnas vacías
+    const columnasEsperadas = Object.keys(mapaCampos);
+    const columnasVacias = columnasEsperadas.filter(c => !columnasConDatos.has(c));
+
+    // Renderizar Vista Previa Obligatoria
+    $('#impKpis').innerHTML = [
+      ['Total de filas', numero(IMP_FILAS_NORMALIZADAS.length)],
+      ['Duplicados por XC', numero(duplicadosXc), duplicadosXc ? 'Se omitirán o avisarán' : 'Ninguno', duplicadosXc ? 'hl' : ''],
+      ['Sin código XC', numero(sinXc), sinXc ? 'Quedarán pendientes' : 'Todos tienen XC'],
+      ['Filas con error', numero(conError), conError ? 'Falta doc o asistencia' : 'Estructura válida', conError ? 'hl' : 'ok'],
+      ['Personas con >1 asistencia', numero(personasMultiAsistencia), 'Suscripciones múltiples (normal)']
+    ].map(([l, v, d2, c]) => `<div class="kpi ${c || ''}"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="d">${esc(d2)}</div></div>`).join('');
+
+    // Detalle de meses detectados
+    if (mesesDetectados.length) {
+      const mesesTxt = mesesDetectados.map(m => `<code>${esc(m.colOriginal)}</code> → <strong>${m.periodo}</strong> (${m.etiqueta})`).join(', ');
+      $('#impMesesMapeados').innerHTML = `<strong>Mapeo de meses históricos detectados (${mesesDetectados.length}):</strong><br>${mesesTxt}`;
+      $('#impMesesMapeados').hidden = false;
+    } else {
+      $('#impMesesMapeados').hidden = true;
+    }
+
+    // Detalle de columnas vacías
+    if (columnasVacias.length) {
+      $('#impColumnasVacias').innerHTML = `<strong>Columnas que vienen vacías o no existen en el archivo (${columnasVacias.length}):</strong> ${columnasVacias.map(c => `<code>${esc(c)}</code>`).join(', ')}`;
+      $('#impColumnasVacias').hidden = false;
+    } else {
+      $('#impColumnasVacias').hidden = true;
+    }
+
+    // Tabla de las primeras 20 filas
+    const prevRows = IMP_FILAS_NORMALIZADAS.slice(0, 20);
+    $('#impThead').innerHTML = `<tr>
+      <th>#</th><th>NIT</th><th>EMPRESA</th><th>XC_SUBSCRIPTION</th><th>ESTADO</th><th>DOC. ASOCIADO</th><th>ASISTENCIA</th><th>VALOR C/IVA</th><th>TITULAR</th><th>BENEFICIARIOS</th>
+    </tr>`;
+    $('#impTbody').innerHTML = prevRows.map((r, i) => `<tr>
+      <td>${i + 1}</td>
+      <td>${esc(r.nit || '')}</td>
+      <td>${esc(r.convenio_empresa || '')}</td>
+      <td>${r.xc_subscriptionname__c ? `<code>${esc(r.xc_subscriptionname__c)}</code>` : '<span class="tag invalida">Sin XC</span>'}</td>
+      <td><span class="tag ${r.estado === 'Activo' ? 'alta' : 'invalida'}">${esc(r.estado || 'Activo')}</span></td>
+      <td><strong>${esc(r.doc_asociado || r.numero_identificacion || '')}</strong></td>
+      <td>${esc(r.asistencia || '')}</td>
+      <td>${r.valor_con_iva != null ? pesos(r.valor_con_iva) : ''}</td>
+      <td>${esc(r.titular || r.asociado || '')}</td>
+      <td>${esc(r.nombre_beneficiario_1 || '')}${r.nombre_beneficiario_2 ? `, ${esc(r.nombre_beneficiario_2)}` : ''}</td>
+    </tr>`).join('');
+
+    $('#impInfo').innerHTML = '';
+    $('#impPreviewArea').hidden = false;
+    $('#impOk').disabled = false;
+  } catch (err) {
+    $('#impInfo').innerHTML = `<div class="notice bad">Error al procesar el archivo: ${esc(err.message)}</div>`;
+  }
+});
+
+// Confirmación y envío por lotes (< 4.5 MB Vercel limit)
+$('#impOk').addEventListener('click', async () => {
+  if (!IMP_FILAS_NORMALIZADAS.length) return toast('No hay filas cargadas.');
+  const total = IMP_FILAS_NORMALIZADAS.length;
+  const modoActual = CONSOLIDADO_STATE.modo || 'test';
+
+  if (!confirm(`¿Confirma la importación de ${numero(total)} filas al consolidado en MODO ${modoActual.toUpperCase()}?\n\nLa unidad de importación es la suscripción (persona + asistencia).`)) {
+    return;
+  }
+
+  $('#impOk').disabled = true;
+  const progreso = $('#impProgreso');
+  progreso.hidden = false;
+
+  const BATCH_SIZE = 200;
+  let insertadosTot = 0;
+  let actualizadosTot = 0;
+  let mesesTot = 0;
+  const eid = $('#impEmpresa').value || undefined;
+
+  try {
+    for (let i = 0; i < total; i += BATCH_SIZE) {
+      const lote = IMP_FILAS_NORMALIZADAS.slice(i, i + BATCH_SIZE);
+      const loteNum = Math.floor(i / BATCH_SIZE) + 1;
+      const totalLotes = Math.ceil(total / BATCH_SIZE);
+      progreso.innerHTML = `Importando lote <strong>${loteNum} de ${totalLotes}</strong> (${Math.min(i + BATCH_SIZE, total)} de ${total} registros)…`;
+
+      const r = await api('/api/admin', {
+        method: 'POST',
+        body: {
+          accion: 'consolidado_conciliacion_importar',
+          filas: lote,
+          empresa_id: eid
+        }
+      });
+
+      insertadosTot += (r.insertados || 0);
+      actualizadosTot += (r.actualizados || 0);
+      mesesTot += (r.meses_insertados || 0);
+    }
+
+    progreso.innerHTML = `<strong>¡Importación completada con éxito!</strong><br>Suscripciones insertadas: ${numero(insertadosTot)}, actualizadas: ${numero(actualizadosTot)}, valores de meses guardados: ${numero(mesesTot)}.`;
+    toast(`Importación finalizada: ${numero(insertadosTot)} suscripciones y ${numero(mesesTot)} meses.`);
+    setTimeout(() => {
+      $('#dImp').close();
+      cargarConsolidado(1);
+    }, 1200);
+  } catch (x) {
+    progreso.className = 'notice bad';
+    progreso.innerHTML = `<strong>Error durante la importación:</strong> ${esc(x.message)}`;
     $('#impOk').disabled = false;
   }
+});
+
+// Cierre mensual
+$('#cCierre').addEventListener('click', () => {
+  const hoy = new Date();
+  const perDefault = hoy.toISOString().slice(0, 7);
+  $('#cierrePeriodo').value = perDefault;
+  $('#cierreErr').hidden = true;
+  $('#dCierre').showModal();
+});
+
+$('#cierreOk').addEventListener('click', async () => {
+  const per = $('#cierrePeriodo').value;
+  if (!per || !/^\d{4}-\d{2}$/.test(per)) {
+    $('#cierreErr').textContent = 'Seleccione un periodo válido en formato AAAA-MM.';
+    $('#cierreErr').hidden = false;
+    return;
+  }
+
+  if (!confirm(`¿Ejecutar el cierre mensual para el periodo ${per} (${clientEtiquetaPeriodo(per)})?\n\nSe generará el valor cobrado para todas las suscripciones activas.`)) return;
+
+  try {
+    $('#cierreOk').disabled = true;
+    const r = await api('/api/admin', {
+      method: 'POST',
+      body: { accion: 'consolidado_conciliacion_cierre_mensual', periodo: per }
+    });
+    toast(r.mensaje);
+    $('#dCierre').close();
+    await cargarConsolidado(1);
+  } catch (x) {
+    $('#cierreErr').textContent = x.message;
+    $('#cierreErr').hidden = false;
+  } finally {
+    $('#cierreOk').disabled = false;
+  }
+});
+
+// Modal de edición rápida de código XC individual
+let EDIT_XC_RECORD_ID = null;
+window.abrirEdicionXc = function(id, nombre, doc, asistencia) {
+  EDIT_XC_RECORD_ID = id;
+  $('#editXcDetalle').innerHTML = `Titular: <strong>${esc(nombre)}</strong><br>Documento: <strong>${esc(doc)}</strong> · Asistencia: <strong>${esc(asistencia)}</strong>`;
+  $('#editXcInput').value = '';
+  $('#editXcErr').hidden = true;
+  $('#dEditXcModal').showModal();
+};
+
+$('#editXcOk').addEventListener('click', async () => {
+  const codigo = $('#editXcInput').value.trim();
+  if (!codigo) {
+    $('#editXcErr').textContent = 'Ingrese el código XC_SUBSCRIPTIONNAME__C.';
+    $('#editXcErr').hidden = false;
+    return;
+  }
+
+  try {
+    $('#editXcOk').disabled = true;
+    await api('/api/admin', {
+      method: 'POST',
+      body: {
+        accion: 'consolidado_conciliacion_completar_xc',
+        id: EDIT_XC_RECORD_ID,
+        xc_subscriptionname__c: codigo
+      }
+    });
+    toast('Código XC asignado con éxito.');
+    $('#dEditXcModal').close();
+    await cargarConsolidado(CONSOLIDADO_PAGINA);
+  } catch (x) {
+    $('#editXcErr').textContent = x.message;
+    $('#editXcErr').hidden = false;
+  } finally {
+    $('#editXcOk').disabled = false;
+  }
+});
+
+// Modal general para completar XC (manual o masivo)
+$('#cCompletarXc').addEventListener('click', () => {
+  $('#xcArchivo').value = '';
+  $('#xcInfo').innerHTML = '';
+  $('#xcDocManual').value = '';
+  $('#xcCodManual').value = '';
+  $('#xcErr').hidden = true;
+  $('#dXc').showModal();
+});
+
+let XC_MASIVO_FILAS = [];
+$('#xcArchivo').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  XC_MASIVO_FILAS = [];
+  if (!f) return;
+
+  try {
+    let rows = [];
+    if (f.name.endsWith('.csv')) {
+      const txt = await f.text();
+      rows = leerCSV(txt);
+    } else {
+      const data = await f.arrayBuffer();
+      const wb = XLSX.read(data);
+      rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+    }
+
+    XC_MASIVO_FILAS = rows.map(r => {
+      const norm = {};
+      Object.entries(r).forEach(([k, v]) => norm[normalizarHeader(k)] = String(v || '').trim());
+      return {
+        doc_asociado: norm['DOC. ASOCIADO'] || norm['DOCUMENTO'] || norm['NUMERO DE IDENTIFICACION'] || norm['DOC_ASOCIADO'] || norm['CEDULA'],
+        xc_subscriptionname__c: norm['XC_SUBSCRIPTIONNAME__C'] || norm['XC_SUBSCRIPTIONNAME'] || norm['CODIGO XC'] || norm['XC'],
+        asistencia: norm['ASISTENCIA']
+      };
+    }).filter(r => r.doc_asociado && r.xc_subscriptionname__c);
+
+    $('#xcInfo').innerHTML = `<div class="notice info">Se leyeron <strong>${numero(XC_MASIVO_FILAS.length)}</strong> registros listos para cruzar por documento.</div>`;
+  } catch (err) {
+    $('#xcInfo').innerHTML = `<div class="notice bad">Error leyendo archivo: ${esc(err.message)}</div>`;
+  }
+});
+
+$('#xcOk').addEventListener('click', async () => {
+  $('#xcErr').hidden = true;
+
+  // Si hay archivo masivo
+  if (XC_MASIVO_FILAS.length) {
+    try {
+      $('#xcOk').disabled = true;
+      const r = await api('/api/admin', {
+        method: 'POST',
+        body: {
+          accion: 'consolidado_conciliacion_completar_xc',
+          cruce_masivo: XC_MASIVO_FILAS
+        }
+      });
+      toast(`Cruce completado: ${r.actualizados} registros actualizados con su código XC.`);
+      $('#dXc').close();
+      await cargarConsolidado(CONSOLIDADO_PAGINA);
+    } catch (x) {
+      $('#xcErr').textContent = x.message;
+      $('#xcErr').hidden = false;
+    } finally {
+      $('#xcOk').disabled = false;
+    }
+    return;
+  }
+
+  // O edición manual
+  const doc = $('#xcDocManual').value.trim();
+  const cod = $('#xcCodManual').value.trim();
+  if (doc && cod) {
+    try {
+      $('#xcOk').disabled = true;
+      const r = await api('/api/admin', {
+        method: 'POST',
+        body: {
+          accion: 'consolidado_conciliacion_completar_xc',
+          doc_asociado: doc,
+          xc_subscriptionname__c: cod
+        }
+      });
+      toast(`Actualizado: ${r.actualizados} registro(s) asignados con el código XC.`);
+      $('#dXc').close();
+      await cargarConsolidado(CONSOLIDADO_PAGINA);
+    } catch (x) {
+      $('#xcErr').textContent = x.message;
+      $('#xcErr').hidden = false;
+    } finally {
+      $('#xcOk').disabled = false;
+    }
+    return;
+  }
+
+  $('#xcErr').textContent = 'Suba un archivo con cruce o complete el documento y código manual.';
+  $('#xcErr').hidden = false;
 });
 
 /* ==================== ALTAS MASIVAS ==================== */
