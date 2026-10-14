@@ -73,7 +73,7 @@ const PERSONAS_FAM = [['conyuge_', 'cónyuge'], ...[1, 2, 3, 4].map(i => [`hijo$
  */
 export function alertasDe(solicitudes, todas, consolidado, empresas) {
   const res = new Map();
-  const consPorId = new Map(consolidado.map(c => [c.id, c]));
+  const consPorId = new Map(consolidado.map(c => [String(c.id), c]));
   const activos = consolidado.filter(c => c.estado === 'activo');
   const valorPorInscripcion = new Map();
   todas.forEach(s => { if (s.tipo === 'alta') valorPorInscripcion.set(s.id_inscripcion, (valorPorInscripcion.get(s.id_inscripcion) || 0) + (s.valor_mensual || 0)); });
@@ -130,10 +130,15 @@ export function alertasDe(solicitudes, todas, consolidado, empresas) {
       if (dup) add('duplicado', `Duplicado: enviado también en la solicitud #${dup.id}`);
     } else {
       if (!String(d.asesor ?? '').trim()) add('vacios', 'Campos vacíos: asesor');
-      const c = consPorId.get(s.consolidado_id);
-      if (!c || c.empresa_id !== s.empresa_id) add('activa', 'La asistencia no existe en el consolidado de la empresa');
+      const cleanDoc = String(s.titular_num_doc || '').replace(/[^0-9A-Za-z]/g, '');
+      const c = consPorId.get(String(s.consolidado_id)) || consolidado.find(x =>
+        (!x.empresa_id || x.empresa_id === s.empresa_id) &&
+        String(x.titular_num_doc || '').replace(/[^0-9A-Za-z]/g, '') === cleanDoc &&
+        x.asistencia === s.asistencia
+      );
+      if (!c || (c.empresa_id && c.empresa_id !== s.empresa_id)) add('activa', 'La asistencia no existe en el consolidado de la empresa');
       else if (c.estado !== 'activo' && c.baja_solicitud_id !== s.id) add('activa', 'La asistencia ya no está activa');
-      const dup = todas.find(o => o.id !== s.id && o.tipo === 'baja' && o.estado !== 'invalida' && o.consolidado_id === s.consolidado_id);
+      const dup = todas.find(o => o.id !== s.id && o.tipo === 'baja' && o.estado !== 'invalida' && String(o.consolidado_id) === String(s.consolidado_id));
       if (dup) add('duplicado', `Baja duplicada: también en la solicitud #${dup.id}`);
     }
     res.set(s.id, a);

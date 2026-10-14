@@ -100,12 +100,46 @@ const ACCIONES = {
                   WHERE s.periodo = ${periodo} ORDER BY s.id DESC LIMIT 20000`;
     const empIds = [...new Set(todas.map(s => s.empresa_id))];
     const docs = [...new Set(todas.map(s => s.titular_num_doc))];
-    const [cons, emps] = empIds.length ? await Promise.all([
+    const modo = await obtenerModoConsolidado();
+    const esTest = modo !== 'prod';
+    const cleanDocs = docs.map(d => String(d).replace(/[^0-9A-Za-z]/g, '')).filter(Boolean);
+    const [consLegacy, emps] = empIds.length ? await Promise.all([
       sql`SELECT id, empresa_id, titular_num_doc, asistencia_id, asistencia, plan_id, plan, mascota, estado, alta_solicitud_id, baja_solicitud_id
           FROM consolidado WHERE empresa_id = ANY(${empIds}) AND titular_num_doc = ANY(${docs})`,
       sql`SELECT id, modelo, productos FROM empresas WHERE id = ANY(${empIds})`
     ]) : [[], []];
-    const alertas = alertasDe(todas, todas, cons, new Map(emps.map(e => [e.id, e])));
+
+    let consolidadoActivo = [];
+    if (empIds.length) {
+      if (esTest) {
+        consolidadoActivo = await sql`
+          SELECT c.id::text AS id, c.empresa_id,
+                 COALESCE(c.doc_asociado, c.numero_identificacion) AS titular_num_doc,
+                 c.asistencia_id, c.asistencia, c.plan_id, c.plan, '' AS mascota,
+                 CASE WHEN UPPER(BTRIM(c.estado)) = 'ACTIVO' THEN 'activo' ELSE 'retirado' END AS estado,
+                 c.solicitud_id AS alta_solicitud_id, NULL::int AS baja_solicitud_id
+          FROM consolidado_conciliacion_test c
+          WHERE (c.empresa_id = ANY(${empIds})
+                 OR regexp_replace(coalesce(c.doc_asociado, ''), '[^0-9A-Za-z]', '', 'g') = ANY(${cleanDocs})
+                 OR regexp_replace(coalesce(c.numero_identificacion, ''), '[^0-9A-Za-z]', '', 'g') = ANY(${cleanDocs}))
+        `;
+      } else {
+        consolidadoActivo = await sql`
+          SELECT c.id::text AS id, c.empresa_id,
+                 COALESCE(c.doc_asociado, c.numero_identificacion) AS titular_num_doc,
+                 c.asistencia_id, c.asistencia, c.plan_id, c.plan, '' AS mascota,
+                 CASE WHEN UPPER(BTRIM(c.estado)) = 'ACTIVO' THEN 'activo' ELSE 'retirado' END AS estado,
+                 c.solicitud_id AS alta_solicitud_id, NULL::int AS baja_solicitud_id
+          FROM consolidado_conciliacion c
+          WHERE (c.empresa_id = ANY(${empIds})
+                 OR regexp_replace(coalesce(c.doc_asociado, ''), '[^0-9A-Za-z]', '', 'g') = ANY(${cleanDocs})
+                 OR regexp_replace(coalesce(c.numero_identificacion, ''), '[^0-9A-Za-z]', '', 'g') = ANY(${cleanDocs}))
+        `;
+      }
+    }
+
+    const consTotal = [...consLegacy.map(c => ({ ...c, id: String(c.id) })), ...consolidadoActivo];
+    const alertas = alertasDe(todas, todas, consTotal, new Map(emps.map(e => [e.id, e])));
     const validadores = await sql`SELECT id, nombre FROM usuarios WHERE rol IN ('maestro','validador')`;
     const nombreVal = new Map(validadores.map(v => [v.id, v.nombre]));
     const filas = todas.map(s => ({ ...s, alertas: alertas.get(s.id) || [], validado_por_nombre: nombreVal.get(s.validado_por) || '' }));
@@ -129,8 +163,9 @@ const ACCIONES = {
 
     const sols = await sql`SELECT * FROM solicitudes WHERE id = ANY(${ids})`;
     const consIds = sols.map(s => s.consolidado_id).filter(Boolean);
-    const cons = await sql`SELECT id, estado, baja_solicitud_id, alta_solicitud_id FROM consolidado
-      WHERE id = ANY(${consIds}) OR alta_solicitud_id = ANY(${ids})`;
+    const intConsIds = consIds.map(Number).filter(Number.isInteger);
+    const cons = (intConsIds.length || ids.length) ? await sql`SELECT id, estado, baja_solicitud_id, alta_solicitud_id FROM consolidado
+      WHERE (id = ANY(${intConsIds.length ? intConsIds : [-1]})) OR alta_solicitud_id = ANY(${ids})` : [];
 
     const empIds = [...new Set(sols.map(s => s.empresa_id))];
     const emps = empIds.length ? await sql`SELECT id, nit, nombre FROM empresas WHERE id = ANY(${empIds})` : [];
@@ -163,16 +198,28 @@ const ACCIONES = {
             q.push(sql`DELETE FROM consolidado_conciliacion WHERE solicitud_id = ${s.id}`);
           }
         } else {
-          q.push(sql`UPDATE consolidado SET estado = 'activo', fecha_baja = NULL, baja_solicitud_id = NULL, actualizado_en = now()
-                     WHERE id = ${s.consolidado_id} AND baja_solicitud_id = ${s.id}`);
+          const c = cons.find(c => String(c.id) === String(s.consolidado_id));
+          if (c) {
+            q.push(sql`UPDATE consolidado SET estado = 'activo', fecha_baja = NULL, baja_solicitud_id = NULL, actualizado_en = now()
+                       WHERE id = ${c.id} AND baja_solicitud_id = ${s.id}`);
+          }
 
           // Revertir baja en consolidado_conciliacion
+          const cleanDocRev = String(s.titular_num_doc || '').replace(/[^0-9A-Za-z]/g, '');
           if (esTest) {
             q.push(sql`UPDATE consolidado_conciliacion_test SET estado = 'Activo', fecha_retiro = NULL, actualizado_en = now()
-                       WHERE solicitud_id = ${s.id} OR (doc_asociado = ${s.titular_num_doc} AND asistencia = ${s.asistencia} AND estado = 'Inactivo' AND fecha_retiro = ${hoy}::date)`);
+                       WHERE id::text = ${String(s.consolidado_id)}
+                          OR solicitud_id = ${s.id}
+                          OR ((regexp_replace(coalesce(doc_asociado, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDocRev}
+                               OR regexp_replace(coalesce(numero_identificacion, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDocRev})
+                              AND asistencia = ${s.asistencia} AND UPPER(BTRIM(estado)) = 'INACTIVO' AND fecha_retiro = ${hoy}::date)`);
           } else {
             q.push(sql`UPDATE consolidado_conciliacion SET estado = 'Activo', fecha_retiro = NULL, actualizado_en = now()
-                       WHERE solicitud_id = ${s.id} OR (doc_asociado = ${s.titular_num_doc} AND asistencia = ${s.asistencia} AND estado = 'Inactivo' AND fecha_retiro = ${hoy}::date)`);
+                       WHERE id::text = ${String(s.consolidado_id)}
+                          OR solicitud_id = ${s.id}
+                          OR ((regexp_replace(coalesce(doc_asociado, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDocRev}
+                               OR regexp_replace(coalesce(numero_identificacion, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDocRev})
+                              AND asistencia = ${s.asistencia} AND UPPER(BTRIM(estado)) = 'INACTIVO' AND fecha_retiro = ${hoy}::date)`);
           }
         }
       }
@@ -296,23 +343,54 @@ const ACCIONES = {
         } else {
           // Baja
           // 1. Legacy consolidado
-          const c = cons.find(c => c.id === s.consolidado_id);
+          const c = cons.find(c => String(c.id) === String(s.consolidado_id));
           if (!c || c.estado !== 'activo') { avisos.push(`#${s.id}: la asistencia ya no está activa; se marca válida sin cambios en el consolidado.`); }
-          q.push(sql`UPDATE consolidado SET estado = 'retirado', fecha_baja = ${hoy}::date, baja_solicitud_id = ${s.id}, actualizado_en = now()
-                     WHERE id = ${s.consolidado_id} AND estado = 'activo'`);
+          if (c) {
+            q.push(sql`UPDATE consolidado SET estado = 'retirado', fecha_baja = ${hoy}::date, baja_solicitud_id = ${s.id}, actualizado_en = now()
+                       WHERE id = ${c.id} AND estado = 'activo'`);
+          }
 
           // 2. Consolidado de conciliación: buscar coincidencia activa
-          let candidatas;
-          if (esTest) {
-            candidatas = await sql`
-              SELECT id, direccion_predio FROM consolidado_conciliacion_test
-              WHERE nit = ${emp.nit} AND doc_asociado = ${s.titular_num_doc} AND asistencia = ${s.asistencia} AND estado = 'Activo'
-            `;
-          } else {
-            candidatas = await sql`
-              SELECT id, direccion_predio FROM consolidado_conciliacion
-              WHERE nit = ${emp.nit} AND doc_asociado = ${s.titular_num_doc} AND asistencia = ${s.asistencia} AND estado = 'Activo'
-            `;
+          const cleanDoc = String(s.titular_num_doc || '').replace(/[^0-9A-Za-z]/g, '');
+          const cleanEmpNit = (emp.nit || '').split('-')[0].replace(/[^0-9A-Za-z]/g, '');
+
+          let candidatas = [];
+          // Primero por ID directo si la solicitud trae consolidado_id
+          if (s.consolidado_id) {
+            if (esTest) {
+              candidatas = await sql`
+                SELECT id, direccion_predio FROM consolidado_conciliacion_test
+                WHERE id::text = ${String(s.consolidado_id)} AND UPPER(BTRIM(estado)) = 'ACTIVO'
+              `;
+            } else {
+              candidatas = await sql`
+                SELECT id, direccion_predio FROM consolidado_conciliacion
+                WHERE id::text = ${String(s.consolidado_id)} AND UPPER(BTRIM(estado)) = 'ACTIVO'
+              `;
+            }
+          }
+
+          // Si no se encontró por ID, buscar de forma tolerante por documento, NIT y asistencia
+          if (!candidatas.length) {
+            if (esTest) {
+              candidatas = await sql`
+                SELECT id, direccion_predio FROM consolidado_conciliacion_test
+                WHERE (empresa_id = ${emp.id}
+                       OR (regexp_replace(split_part(coalesce(nit, ''), '-', 1), '[^0-9A-Za-z]', '', 'g') = ${cleanEmpNit} AND coalesce(nit, '') <> ''))
+                  AND (regexp_replace(coalesce(doc_asociado, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDoc}
+                       OR regexp_replace(coalesce(numero_identificacion, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDoc})
+                  AND asistencia = ${s.asistencia} AND UPPER(BTRIM(estado)) = 'ACTIVO'
+              `;
+            } else {
+              candidatas = await sql`
+                SELECT id, direccion_predio FROM consolidado_conciliacion
+                WHERE (empresa_id = ${emp.id}
+                       OR (regexp_replace(split_part(coalesce(nit, ''), '-', 1), '[^0-9A-Za-z]', '', 'g') = ${cleanEmpNit} AND coalesce(nit, '') <> ''))
+                  AND (regexp_replace(coalesce(doc_asociado, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDoc}
+                       OR regexp_replace(coalesce(numero_identificacion, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDoc})
+                  AND asistencia = ${s.asistencia} AND UPPER(BTRIM(estado)) = 'ACTIVO'
+              `;
+            }
           }
 
           let regBaja = null;
@@ -326,9 +404,7 @@ const ACCIONES = {
               const coinc = candidatas.filter(cd => (cd.direccion_predio || '').trim().toLowerCase() === dirSol);
               if (coinc.length === 1) regBaja = coinc[0];
             }
-            if (!regBaja) {
-              avisos.push(`Solicitud #${s.id}: existen ${candidatas.length} suscripciones activas para ${s.titular_num_doc}. Se requiere desambiguación manual.`);
-            }
+            if (!regBaja) regBaja = candidatas[0];
           }
 
           if (regBaja) {
@@ -350,9 +426,21 @@ const ACCIONES = {
           // Notificar si el titular conserva otras asistencias activas
           let otras;
           if (esTest) {
-            [otras] = await sql`SELECT count(*)::int AS n FROM consolidado_conciliacion_test WHERE doc_asociado = ${s.titular_num_doc} AND estado = 'Activo'`;
+            [otras] = await sql`
+              SELECT count(*)::int AS n FROM consolidado_conciliacion_test
+              WHERE (regexp_replace(coalesce(doc_asociado, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDoc}
+                     OR regexp_replace(coalesce(numero_identificacion, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDoc})
+                AND UPPER(BTRIM(estado)) = 'ACTIVO'
+                ${regBaja ? sql`AND id != ${regBaja.id}` : sql``}
+            `;
           } else {
-            [otras] = await sql`SELECT count(*)::int AS n FROM consolidado_conciliacion WHERE doc_asociado = ${s.titular_num_doc} AND estado = 'Activo'`;
+            [otras] = await sql`
+              SELECT count(*)::int AS n FROM consolidado_conciliacion
+              WHERE (regexp_replace(coalesce(doc_asociado, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDoc}
+                     OR regexp_replace(coalesce(numero_identificacion, ''), '[^0-9A-Za-z]', '', 'g') = ${cleanDoc})
+                AND UPPER(BTRIM(estado)) = 'ACTIVO'
+                ${regBaja ? sql`AND id != ${regBaja.id}` : sql``}
+            `;
           }
           if (otras && otras.n > 0) {
             avisos.push(`Aviso: el titular ${s.titular_num_doc} conserva ${otras.n} otra(s) suscripción(es) activa(s) en el consolidado.`);

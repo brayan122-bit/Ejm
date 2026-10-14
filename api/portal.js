@@ -1,7 +1,7 @@
 // Tablero de la empresa: conciliación, personas activas, solicitudes.
 // Un usuario de empresa SOLO recibe datos de su propia empresa; el filtro es en el servidor.
 // empresa_admin ve solicitudes de todos los periodos; empresa_usuario solo del actual.
-import { sql, asegurarEsquema, periodoActual, periodoValido, registrarError, auditar } from './_db.js';
+import { sql, asegurarEsquema, periodoActual, periodoValido, registrarError, auditar, obtenerModoConsolidado } from './_db.js';
 import { exigir, empresaObjetivo, esRolEmpresa } from './_auth.js';
 import { resumenConciliacion, MODELOS } from './_catalogo.js';
 
@@ -17,13 +17,52 @@ export default async function handler(req, res) {
     // empresa_admin ve todas las solicitudes de todos los periodos (con filtro de periodo en el front)
     // empresa_usuario y roles internos ven solo el periodo seleccionado
     const esAdmin = u.rol === 'empresa_admin' || !esRolEmpresa(u.rol);
+    const modo = await obtenerModoConsolidado();
+    const esTest = modo !== 'prod';
+    const cleanEmpNit = (emp.nit || '').split('-')[0].replace(/[^0-9A-Za-z]/g, '');
 
-    const [activos, solicitudes, periodos] = await Promise.all([
-      sql`SELECT id, titular_num_doc, titular_nombre, asistencia, plan, mascota, pago, valor_mensual, valor_empresa,
-            valor_colaborador, personas, to_char(fecha_alta, 'DD/MM/YYYY') AS fecha_alta,
-            datos->>'titular_tipo_doc' AS tipo_doc,
-            COALESCE(modelo_aplicado, ${emp.modelo <= 2 ? emp.modelo : 1}) AS modelo_aplicado
-          FROM consolidado WHERE empresa_id = ${emp.id} AND estado = 'activo' ORDER BY titular_nombre, asistencia`,
+    const consultaActivos = esTest
+      ? sql`SELECT c.id::text AS id,
+                   COALESCE(c.doc_asociado, c.numero_identificacion, '') AS titular_num_doc,
+                   COALESCE(c.asociado, c.titular, '—') AS titular_nombre,
+                   c.asistencia,
+                   COALESCE(c.plan, 'Plan Único') AS plan,
+                   '' AS mascota,
+                   'Nomina' AS pago,
+                   COALESCE(c.valor_con_iva, 0)::numeric AS valor_mensual,
+                   CASE WHEN ${emp.modelo} = 1 THEN COALESCE(c.valor_con_iva, 0)::numeric ELSE 0 END AS valor_empresa,
+                   CASE WHEN ${emp.modelo} = 2 THEN COALESCE(c.valor_con_iva, 0)::numeric ELSE 0 END AS valor_colaborador,
+                   1 AS personas,
+                   to_char(c.fecha_cargue, 'DD/MM/YYYY') AS fecha_alta,
+                   COALESCE(c.tipo_doc, 'CC') AS tipo_doc,
+                   ${emp.modelo <= 2 ? emp.modelo : 1} AS modelo_aplicado
+            FROM consolidado_conciliacion_test c
+            WHERE (c.empresa_id = ${emp.id}
+                   OR (regexp_replace(split_part(coalesce(c.nit, ''), '-', 1), '[^0-9A-Za-z]', '', 'g') = ${cleanEmpNit} AND coalesce(c.nit, '') <> ''))
+              AND UPPER(BTRIM(c.estado)) = 'ACTIVO'
+            ORDER BY titular_nombre, c.asistencia`
+      : sql`SELECT c.id::text AS id,
+                   COALESCE(c.doc_asociado, c.numero_identificacion, '') AS titular_num_doc,
+                   COALESCE(c.asociado, c.titular, '—') AS titular_nombre,
+                   c.asistencia,
+                   COALESCE(c.plan, 'Plan Único') AS plan,
+                   '' AS mascota,
+                   'Nomina' AS pago,
+                   COALESCE(c.valor_con_iva, 0)::numeric AS valor_mensual,
+                   CASE WHEN ${emp.modelo} = 1 THEN COALESCE(c.valor_con_iva, 0)::numeric ELSE 0 END AS valor_empresa,
+                   CASE WHEN ${emp.modelo} = 2 THEN COALESCE(c.valor_con_iva, 0)::numeric ELSE 0 END AS valor_colaborador,
+                   1 AS personas,
+                   to_char(c.fecha_cargue, 'DD/MM/YYYY') AS fecha_alta,
+                   COALESCE(c.tipo_doc, 'CC') AS tipo_doc,
+                   ${emp.modelo <= 2 ? emp.modelo : 1} AS modelo_aplicado
+            FROM consolidado_conciliacion c
+            WHERE (c.empresa_id = ${emp.id}
+                   OR (regexp_replace(split_part(coalesce(c.nit, ''), '-', 1), '[^0-9A-Za-z]', '', 'g') = ${cleanEmpNit} AND coalesce(c.nit, '') <> ''))
+              AND UPPER(BTRIM(c.estado)) = 'ACTIVO'
+            ORDER BY titular_nombre, c.asistencia`;
+
+    let [activos, solicitudes, periodos] = await Promise.all([
+      consultaActivos,
 
       esAdmin
         ? sql`SELECT id, recibido_en, tipo, id_inscripcion, titular_num_doc, titular_nombre,
@@ -43,6 +82,16 @@ export default async function handler(req, res) {
 
       sql`SELECT DISTINCT periodo FROM solicitudes WHERE empresa_id = ${emp.id} ORDER BY periodo DESC LIMIT 48`
     ]);
+
+    if (!activos.length) {
+      activos = await sql`
+        SELECT id::text AS id, titular_num_doc, titular_nombre, asistencia, plan, mascota, pago, valor_mensual, valor_empresa,
+              valor_colaborador, personas, to_char(fecha_alta, 'DD/MM/YYYY') AS fecha_alta,
+              datos->>'titular_tipo_doc' AS tipo_doc,
+              COALESCE(modelo_aplicado, ${emp.modelo <= 2 ? emp.modelo : 1}) AS modelo_aplicado
+        FROM consolidado WHERE empresa_id = ${emp.id} AND UPPER(BTRIM(estado)) = 'ACTIVO' ORDER BY titular_nombre, asistencia
+      `;
+    }
 
     // Usuarios pendientes de aprobación (solo para empresa_admin)
     let pendientesAprobacion = 0;

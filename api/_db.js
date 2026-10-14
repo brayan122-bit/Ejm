@@ -293,6 +293,13 @@ const MIGRACIONES = [
       )`,
       sql`CREATE INDEX IF NOT EXISTS consolidado_meses_test_per_idx ON consolidado_meses_test (periodo)`
     ]
+  },
+  {
+    id: '010_solicitudes_consolidado_id_text',
+    queries: () => [
+      sql`ALTER TABLE solicitudes ALTER COLUMN consolidado_id TYPE TEXT USING consolidado_id::text`,
+      sql`CREATE INDEX IF NOT EXISTS solicitudes_consolidado_id_idx ON solicitudes (consolidado_id)`
+    ]
   }
 ];
 
@@ -345,7 +352,7 @@ export async function asegurarEsquema() {
     valor_empresa   INTEGER NOT NULL DEFAULT 0,
     valor_colaborador INTEGER NOT NULL DEFAULT 0,
     personas        INTEGER NOT NULL DEFAULT 1,
-    consolidado_id  INTEGER,
+    consolidado_id  TEXT,
     estado          TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'valida', 'invalida')),
     motivo          TEXT,
     validado_por    INTEGER REFERENCES usuarios(id),
