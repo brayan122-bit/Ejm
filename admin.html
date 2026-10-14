@@ -93,6 +93,27 @@
       </div>
 
       <div class="kpis" id="cKpis"></div>
+
+      <!-- Cuadro resumido "Qué tienen contratado" -->
+      <div class="card" id="cCardContratado">
+        <h3 id="cTitContratado">Qué tienen contratado</h3>
+        <div class="tabla" style="max-height:none">
+          <table>
+            <thead>
+              <tr>
+                <th>Asistencia</th>
+                <th>Plan</th>
+                <th class="num">Personas inscritas</th>
+                <th class="num">Valor mensual</th>
+              </tr>
+            </thead>
+            <tbody id="cTbProductos"></tbody>
+            <tfoot id="cTfProductos"></tfoot>
+          </table>
+          <div class="vacio" id="cVacioProductos" hidden>Aún no hay asistencias activas.</div>
+        </div>
+      </div>
+
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
         <p class="muted" id="cCuenta" style="margin:0;font-size:13px"></p>
         <div id="cPaginacion" style="display:flex;align-items:center;gap:8px" hidden>

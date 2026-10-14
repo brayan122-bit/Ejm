@@ -174,13 +174,25 @@ const COLUMNAS_BASE_CONSOLIDADO = [
   'NOMBRE BENEFICIARIO 3', 'TIPO DE DOC. BENEFICIARIO 3', 'DOCUMENTO NÚMERO BENEFICIARIO 3', 'PARENTESCO4', '%3'
 ];
 
+function clientClavePeriodo(p) {
+  if (p == null) return '';
+  if (typeof p === 'object') return p.periodo || p.mes || p.key || '';
+  return String(p).trim();
+}
+
 function clientEtiquetaPeriodo(p) {
-  if (!p || !/^\d{4}-\d{2}$/.test(p)) return p || '';
-  const [y, m] = p.split('-');
+  if (p == null) return '';
+  if (typeof p === 'object') {
+    if (p.etiqueta) return p.etiqueta;
+    p = p.periodo || p.mes || p.key || '';
+  }
+  const s = String(p).trim();
+  if (!s || !/^\d{4}-\d{2}$/.test(s)) return s;
+  const [y, m] = s.split('-');
   const n = parseInt(m, 10);
   const meses2025 = ['', 'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
   const mesesAbrev = ['', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-  if (y === '2025') return meses2025[n] || p;
+  if (y === '2025') return meses2025[n] || s;
   return `${mesesAbrev[n] || m}-${y.slice(2)}`;
 }
 
@@ -278,16 +290,66 @@ async function cargarConsolidado(pagina = 1) {
   const k = d.kpis || {};
   if ($('#cKpis')) {
     $('#cKpis').innerHTML = [
-      ['Suscripciones totales', numero(k.total || 0), `${numero(k.personas_unicas || 0)} personas`],
+      ['Suscripciones totales', numero(k.total || k.total_suscripciones || 0), `${numero(k.personas_unicas || 0)} personas`],
       ['Activas', numero(k.activas || 0), 'Cobran en el mes', 'ok'],
       ['Inactivas', numero(k.inactivas || 0), 'Retiradas'],
-      ['Pendientes de XC', numero(k.pendientes_xc || 0), k.pendientes_xc ? 'Requieren código XC' : 'Al día', k.pendientes_xc ? 'hl' : ''],
+      ['Pendientes de XC', numero(k.pendientes_xc != null ? k.pendientes_xc : (k.sin_xc || 0)), (k.pendientes_xc || k.sin_xc) ? 'Requieren código XC' : 'Al día', (k.pendientes_xc || k.sin_xc) ? 'hl' : ''],
       ['Personas con >1 asistencia', numero(k.personas_multi_asistencia || 0), 'Suscripciones múltiples'],
-      ['Valor mensual activo', pesos(k.valor_total_activo || 0), 'Con IVA']
+      ['Valor mensual activo', pesos(k.valor_total_activo != null ? k.valor_total_activo : (k.valor_mensual_total || 0)), 'Con IVA']
     ].map(([l, v, d2, c]) => `<div class="kpi ${c || ''}"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="d">${esc(d2)}</div></div>`).join('');
   }
 
+  pintarCuadroContratado(d.resumen_contratado);
   pintarConsolidado();
+}
+
+function pintarCuadroContratado(resumen) {
+  const tb = $('#cTbProductos');
+  const tf = $('#cTfProductos');
+  const vacio = $('#cVacioProductos');
+  const tit = $('#cTitContratado');
+
+  const selEmp = $('#cEmpresa');
+  const nombreEmp = (selEmp && selEmp.value && selEmp.selectedOptions?.[0])
+    ? selEmp.selectedOptions[0].textContent
+    : 'Todas las empresas';
+
+  if (tit) {
+    tit.textContent = `Qué tienen contratado (${nombreEmp})`;
+  }
+
+  const prods = resumen?.por_producto || [];
+  const totCant = resumen?.total_asistencias ?? prods.reduce((a, b) => a + (Number(b.cantidad) || 0), 0);
+  const totVal = resumen?.total_valor ?? prods.reduce((a, b) => a + (Number(b.valor) || 0), 0);
+
+  if (tb) {
+    if (!prods.length) {
+      tb.innerHTML = '';
+    } else {
+      tb.innerHTML = prods.map(p => `<tr>
+        <td>${esc(p.asistencia)}</td>
+        <td>${esc(p.plan)}</td>
+        <td class="num">${numero(p.cantidad)}</td>
+        <td class="num">${pesos(p.valor)}</td>
+      </tr>`).join('');
+    }
+  }
+
+  if (tf) {
+    if (prods.length) {
+      tf.innerHTML = `<tr style="font-weight:bold;background:#fafafa">
+        <td colspan="2"><strong>Total</strong></td>
+        <td class="num"><strong>${numero(totCant)}</strong></td>
+        <td class="num"><strong>${pesos(totVal)}</strong></td>
+      </tr>`;
+    } else {
+      tf.innerHTML = '';
+    }
+  }
+
+  if (vacio) {
+    vacio.hidden = prods.length > 0;
+  }
 }
 
 function pintarConsolidado() {
@@ -384,7 +446,8 @@ function pintarConsolidado() {
     `;
 
     periodos.forEach(p => {
-      const v = r.meses ? r.meses[p] : null;
+      const clave = clientClavePeriodo(p);
+      const v = r.meses ? r.meses[clave] : null;
       tds += `<td class="num" style="background:${v != null ? '#fafcff' : '#fcfcfc'}">${v != null ? pesos(v) : '<span class="muted">—</span>'}</td>`;
     });
 
@@ -618,8 +681,9 @@ async function descargarConsolidadoActual(nombreArchivo = null) {
       };
 
       periodos.forEach(p => {
+        const clave = clientClavePeriodo(p);
         const et = clientEtiquetaPeriodo(p);
-        obj[et] = (f.meses && f.meses[p] != null) ? f.meses[p] : '';
+        obj[et] = (f.meses && f.meses[clave] != null) ? f.meses[clave] : '';
       });
 
       obj['TITULAR'] = f.titular || '';

@@ -6,6 +6,13 @@
   const vistasInscripcion = [document.querySelector('nav.rail'), document.querySelector('main.layout'), document.querySelector('div.actions')];
   let encontradas = [], docBuscado = '';
 
+  function parsearDinero(val) {
+    if (val == null || val === '') return 0;
+    if (typeof val === 'number') return isFinite(val) ? Math.round(val) : 0;
+    const n = parseFloat(String(val).trim());
+    return isNaN(n) ? (parseInt(String(val).replace(/\D/g, ''), 10) || 0) : Math.round(n);
+  }
+
   function cambiarModulo(mod){
     const bajas = mod === 'bajas';
     vistasInscripcion.forEach(v => { if(v) v.hidden = bajas; });
@@ -57,7 +64,7 @@
       ${encontradas.map(a => `<label class="chk ${a.baja_pendiente ? 'off' : ''}">
         <input type="checkbox" value="${a.id}" ${a.baja_pendiente ? 'disabled' : ''}>
         <span><strong>${esc(a.asistencia)} · ${esc(a.plan)}</strong>${a.mascota ? ' — ' + esc(a.mascota) : ''}
-          <small>${esc(pesos(a.valor_mensual) || '$0')} mensuales${a.fecha_alta ? ' · activa desde ' + esc(a.fecha_alta) : ''}${a.baja_pendiente ? ' · <b>ya tiene una baja pendiente</b>' : ''}</small></span></label>`).join('')}
+          <small>${esc(pesos(parsearDinero(a.valor_mensual)) || '$0')} mensuales${a.fecha_alta ? ' · activa desde ' + esc(a.fecha_alta) : ''}${a.baja_pendiente ? ' · <b>ya tiene una baja pendiente</b>' : ''}</small></span></label>`).join('')}
       ${d.altas_pendientes ? `<div class="notice info" style="margin:8px 0 0">Además tiene ${d.altas_pendientes} alta(s) pendiente(s) de validación que no aparecen aquí.</div>` : ''}
       <div class="msg" id="bajaSelMsg"></div>`;
     const libres = encontradas.filter(a => !a.baja_pendiente).length;
@@ -66,7 +73,7 @@
   }
   function elegidas(){ return [...el('bajaResultados').querySelectorAll('input[type=checkbox]:checked')].map(i => i.value); }
   function actualizarTotal(){
-    const ids = elegidas(), v = encontradas.filter(a => ids.includes(String(a.id))).reduce((s, a) => s + (a.valor_mensual || 0), 0);
+    const ids = elegidas(), v = encontradas.filter(a => ids.includes(String(a.id))).reduce((s, a) => s + parsearDinero(a.valor_mensual), 0);
     el('bajaTotal').textContent = ids.length ? `${ids.length} asistencia${ids.length > 1 ? 's' : ''} · deja de pagar ${pesos(v) || '$0'} al mes` : 'Seleccione al menos una asistencia';
     el('bajaTotal').className = 'total ' + (ids.length ? 'ok' : '');
   }

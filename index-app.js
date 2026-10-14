@@ -93,9 +93,12 @@ function parseFecha(s){
 function edad(d, ref=new Date()){ let a = ref.getFullYear()-d.getFullYear(); const mm = ref.getMonth()-d.getMonth(); if(mm<0 || (mm===0 && ref.getDate()<d.getDate())) a--; return a; }
 function meses(d, ref=new Date()){ let m = (ref.getFullYear()-d.getFullYear())*12 + ref.getMonth()-d.getMonth(); if(ref.getDate()<d.getDate()) m--; return m; }
 function hoy(){ const d=new Date(); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear(); }
-function maskFecha(v){ const d=v.replace(/\D/g,'').slice(0,8); return d.length>4 ? d.slice(0,2)+'/'+d.slice(2,4)+'/'+d.slice(4) : d.length>2 ? d.slice(0,2)+'/'+d.slice(2) : d; }
-function pesos(v){ const n = parseInt(String(v).replace(/\D/g,''),10); return isNaN(n) ? '' : '$' + n.toLocaleString('es-CO'); }
-function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'), 3600); }
+function pesos(v){
+  if (v == null || v === '') return '';
+  const num = typeof v === 'number' ? v : parseFloat(String(v).trim());
+  const n = isNaN(num) ? (parseInt(String(v).replace(/\D/g,''), 10) || 0) : Math.round(num);
+  return '$' + n.toLocaleString('es-CO');
+}
 function nombreCompleto(p){ if(!p) return ''; if(p.nombre) return p.nombre; return [p.nombres, p.apellidos || [p.apellido1,p.apellido2].filter(Boolean).join(' ')].filter(Boolean).join(' '); }
 const modActual = () => MODALIDADES.find(m=>m.v===S.modalidad);
 
